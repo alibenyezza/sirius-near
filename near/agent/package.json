@@ -1,0 +1,24 @@
+{
+  "name": "sirius-near-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Sirius on NEAR: private dataset audit on NEAR AI Cloud, runner bridge and MCP tools",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --env-file-if-exists=.env --test test/*.test.mjs",
+    "audit": "node privacy-audit.mjs",
+    "attest": "node privacy-audit.mjs --attest-only"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@phala/dcap-qvl": "^0.7.0",
+    "jose": "^6.2.14",
+    "near-api-js": "^7.4.0",
+    "viem": "^2.57.13",
+    "zod": "^4.6.7"
+  }
+}
