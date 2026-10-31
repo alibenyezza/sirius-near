@@ -34,7 +34,7 @@ stops them?**
 | 9 | Keep an approval so a friendly account can transfer the token back after the sale | NEP-178: every transfer clears all approvals (`internal_transfer`). | near-contract-standards |
 | 10 | Keep the holder-only page open | The page checks the current owner on-chain on every request, from a fresh NEP-413 signature. A session issued before the sale is not reused. | web app |
 | 11 | Lower the price to zero before selling | This lowers future earnings, so it only hurts the seller's own sale. The price is public (`get_dataset`), so the buyer sees it before buying. | `market::set_price` |
-| 12 | Market owner steals vault funds | The owner can only register or revoke runners. No method lets the owner move vault funds or tokens. Disclosed limit: if the market account keeps a full-access key, the code could be redeployed. The demo deployment deletes it (`near/scripts/lock-market.sh`). | `market` |
+| 12 | Market owner steals vault funds | The owner can only register or revoke runners. No method lets the owner move vault funds or tokens. Disclosed limit: during the hackathon the market account keeps its full-access key so the contract can still be fixed, and whoever holds that key could redeploy the code. Deleting the key (`near account delete-keys`) makes the market immutable, like the vaults. | `market` |
 | 13 | A fake runner delivers a fake model to release payment | Only accounts registered by the market owner can `deliver`. What is checked on-chain: the caller is a registered, non-revoked runner. What is **not** checked on-chain: the TDX quote itself. The owner verifies it off-chain before registering the runner, and the quote hash is stored next to the runner so anyone can check it again. | `market::register_runner`, `market::deliver` |
 | 14 | The runner never delivers, and the data buyer's money is stuck | After the deadline, the data buyer calls `refund`. Only an order that is still `Paid` can be refunded, and a delivered order cannot be. | `market::refund` |
 
@@ -45,3 +45,7 @@ stops them?**
 - The vault pays `balance - storage reserve` and reports that amount to the market. If the receiving account no longer
   exists, the transfer fails and the funds stay in the vault, while the history records the attempted amount.
 - Attestation of the training enclave is checked off-chain (see #13), not by the contract.
+- Agent budgets and the "paid from a budget" flag of each order are also stored at the contract's expense.
+- An agent's function-call key spends its gas allowance (0.25 NEAR on the demo agent); when it runs out, the agent
+  cannot send transactions until a human adds a new key. It never gives access to the budget itself, which only the
+  funder can close.

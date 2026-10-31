@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Full Sirius NEAR journey on testnet, with real transactions:
-#   publish a fictional dataset (Alice) -> pay a training run (Carol) -> runner delivers -> Alice withdraws
-#   -> Alice sells the NFT to Bob -> Carol pays a second run, delivered after the sale
+#   publish a fictional dataset (Alice) -> NEAR AI Cloud attestation -> pay a training run (Carol)
+#   -> the runner bridge trains and delivers -> Alice withdraws -> an agent pays a run from its budget over MCP
+#   -> Alice sells the NFT to Bob -> the agent's run is delivered after the sale
 #   -> Alice tries to withdraw (refused) -> Bob withdraws -> the vault has no access key.
 #
-# Needs near-cli-rs and the accounts below in the legacy keychain (~/.near-credentials/testnet).
+# Needs near-cli-rs, the accounts below in the legacy keychain (~/.near-credentials/testnet), Node 22 and
+# near/agent/.env (see near/agent/.env.example). Under WSL, Node is the Windows node.exe.
 # Every transaction id is written to near/scripts/demo-testnet.log.
 set -euo pipefail
 
@@ -18,6 +20,9 @@ PRICE_YOCTO=${PRICE_YOCTO:-500000000000000000000000} # 0.5 NEAR
 HERE=$(cd "$(dirname "$0")" && pwd)
 LOG="$HERE/demo-testnet.log"
 CSV="$HERE/../examples/hospital-stays-fictional.csv"
+AGENT_DIR="$HERE/../agent"
+NODE=${NODE:-$(command -v node || command -v node.exe)}
+node_agent() { (cd "$AGENT_DIR" && "$NODE" --env-file=.env "$@"); }
 : > "$LOG"
 
 say() { printf '\n== %s\n' "$*" | tee -a "$LOG"; }
@@ -59,7 +64,7 @@ call "$OWNER" register_runner "{\"runner_id\":\"$RUNNER\",\"quote_hash\":\"$QUOT
 
 say "1. Alice publishes the fictional dataset: the market creates its vault and mints the NFT"
 CID_HASH=$(sha256sum "$CSV" | cut -d' ' -f1)
-call "$ALICE" publish "{\"title\":\"Hospital stays (fictional)\",\"description\":\"60 fictional patients, length of stay\",\"profile\":\"linear_regression\",\"cid_hash\":\"$CID_HASH\",\"price\":\"$PRICE_YOCTO\"}" '0.08 NEAR'
+call "$ALICE" publish "{\"title\":\"Hospital stays (fictional)\",\"description\":\"240 fictional patients, length of stay\",\"profile\":\"linear_regression\",\"cid_hash\":\"$CID_HASH\",\"price\":\"$PRICE_YOCTO\"}" '0.08 NEAR'
 TOKEN=$(view "$MARKET" nft_total_supply '{}' | tr -d '"')
 VAULT="ds-$TOKEN.$MARKET"
 echo "token $TOKEN, vault $VAULT" | tee -a "$LOG"
@@ -68,13 +73,14 @@ view "$MARKET" nft_token "{\"token_id\":\"$TOKEN\"}" | tee -a "$LOG"
 say "2. The vault has no access key"
 near account list-keys "$VAULT" network-config testnet now 2>&1 | grep -iE 'key|empty|no access' | tee -a "$LOG" || true
 
+say "2b. Proof that NEAR AI Cloud runs in a TEE (fresh nonce, Intel TDX, NVIDIA), used for the privacy audit"
+node_agent privacy-audit.mjs --attest-only | tail -1 | tee -a "$LOG" || true
+
 say "3. Carol pays a training run (0.5 NEAR)"
 ORDER1=$(call "$CAROL" order "{\"token_id\":\"$TOKEN\",\"profile\":\"linear_regression\",\"deadline_minutes\":60}" '0.5 NEAR' | tr -d '"')
 
-say "4. The runner delivers: 90% to the vault, 10% to the treasury"
-MODEL_HASH=$(printf 'model of order %s' "$ORDER1" | sha256sum | cut -d' ' -f1)
-CERT_HASH=$(printf 'certificate of order %s' "$ORDER1" | sha256sum | cut -d' ' -f1)
-call "$RUNNER" deliver "{\"order_id\":\"$ORDER1\",\"model_hash\":\"$MODEL_HASH\",\"certificate_hash\":\"$CERT_HASH\"}" '0 NEAR'
+say "4. The runner bridge trains the model and delivers: 90% to the vault, 10% to the treasury"
+node_agent runner-bridge.mjs --order "$ORDER1" | tee -a "$LOG"
 echo "vault available: $(view "$VAULT" available '{}')" | tee -a "$LOG"
 
 say "5. Alice withdraws"
@@ -82,14 +88,17 @@ echo "alice before: $(balance "$ALICE")" | tee -a "$LOG"
 call "$ALICE" withdraw "{\"token_id\":\"$TOKEN\"}" '1 yoctoNEAR'
 echo "alice after: $(balance "$ALICE")" | tee -a "$LOG"
 
-say "6. Carol pays a second run, then Alice sells the NFT to Bob before delivery"
-ORDER2=$(call "$CAROL" order "{\"token_id\":\"$TOKEN\",\"profile\":\"linear_regression\",\"deadline_minutes\":60}" '0.5 NEAR' | tr -d '"')
+say "6. An agent pays a run from the budget Carol gave it, through the MCP server (function-call key, no deposit)"
+node_agent agent-demo.mjs "$TOKEN" 0.6 | tee "$HERE/agent-demo.out" | tee -a "$LOG"
+ORDER2=$(grep -o '"orderId": "[0-9]*"' "$HERE/agent-demo.out" | head -1 | grep -o '[0-9]*')
+rm -f "$HERE/agent-demo.out"
+echo "agent order $ORDER2" | tee -a "$LOG"
+
+say "6b. Alice sells the NFT to Bob before that run is delivered"
 call "$ALICE" nft_transfer "{\"receiver_id\":\"$BOB\",\"token_id\":\"$TOKEN\"}" '1 yoctoNEAR'
 
 say "7. Delivery after the sale: the money lands in the vault, which now belongs to Bob"
-MODEL_HASH=$(printf 'model of order %s' "$ORDER2" | sha256sum | cut -d' ' -f1)
-CERT_HASH=$(printf 'certificate of order %s' "$ORDER2" | sha256sum | cut -d' ' -f1)
-call "$RUNNER" deliver "{\"order_id\":\"$ORDER2\",\"model_hash\":\"$MODEL_HASH\",\"certificate_hash\":\"$CERT_HASH\"}" '0 NEAR'
+node_agent runner-bridge.mjs --order "$ORDER2" | tee -a "$LOG"
 echo "vault available: $(view "$VAULT" available '{}')" | tee -a "$LOG"
 
 say "8. Alice (old holder) tries to withdraw: refused"
@@ -110,3 +119,4 @@ say "11. History and holders of the NFT"
 view "$MARKET" get_dataset "{\"token_id\":\"$TOKEN\"}" | tee -a "$LOG"
 view "$MARKET" get_holders "{\"token_id\":\"$TOKEN\"}" | tee -a "$LOG"
 view "$MARKET" get_history "{\"token_id\":\"$TOKEN\"}" | tee -a "$LOG"
+view "$MARKET" get_agent_budget "{\"agent_id\":\"agent.$CAROL\"}" | tee -a "$LOG"

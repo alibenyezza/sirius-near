@@ -53,6 +53,18 @@ export async function listDatasets(limit = 50) {
   return (await Promise.all(tokens.map((t) => getDataset(t.token_id)))).filter(Boolean);
 }
 
+/** Every order of the market, read one by one (the contract has no list view); stops after 3 missing ids. */
+export async function allOrders() {
+  const out = [];
+  for (let id = 1, misses = 0; misses < 3; id++) {
+    const order = await view('get_order', { order_id: String(id) });
+    if (!order) { misses++; continue; }
+    misses = 0;
+    out.push({ id: String(id), ...order });
+  }
+  return out;
+}
+
 export function loadAgent() {
   const accountId = process.env.SIRIUS_AGENT_ACCOUNT;
   const file = process.env.SIRIUS_AGENT_CREDENTIALS;
