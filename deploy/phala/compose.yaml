@@ -1,0 +1,59 @@
+services:
+  runner:
+    image: ghcr.io/dvb-ali-noe/sirius-runner@sha256:fbc137a97f16213f331ce54916a5053f17c97a06d3f614c8b127365b526c5e19
+    init: true
+    restart: unless-stopped
+    read_only: true
+    environment:
+      NODE_ENV: production
+      TEE_MODE: phala
+      RUNNER_PORT: 4100
+      RUNNER_BOOTSTRAP_ONLY: "true"
+      RUNNER_REPLAY_DIR: /var/lib/sirius-runner/replay
+      RUNNER_TLS_ENABLED: "true"
+      RUNNER_TLS_HOSTNAME: ${DSTACK_APP_ID}-4100s.${DSTACK_GATEWAY_DOMAIN}
+      PINATA_GATEWAY: ${PINATA_GATEWAY}
+      PINATA_JWT: ${PINATA_JWT}
+      RUNNER_TRANSPORT_SECRET: ${RUNNER_TRANSPORT_SECRET}
+      SIRIUS_APP_ORIGIN: ${SIRIUS_APP_ORIGIN}
+      EVM_NETWORK: ${EVM_NETWORK}
+      EVM_RPC_URL: ${EVM_RPC_URL}
+      SIRIUS_ESCROW_ADDRESS: ${SIRIUS_ESCROW_ADDRESS}
+      SIRIUS_LOCK_AUTHORIZER: ${SIRIUS_LOCK_AUTHORIZER:-}
+      SIRIUS_LEGACY_ESCROW_ADDRESSES: ${SIRIUS_LEGACY_ESCROW_ADDRESSES:-}
+      SIRIUS_USDC_ADDRESS: ${SIRIUS_USDC_ADDRESS}
+      SIRIUS_KYB_ADDRESS: ${SIRIUS_KYB_ADDRESS}
+      SIRIUS_DATASET_ADDRESS: ${SIRIUS_DATASET_ADDRESS}
+      RUNNER_MAX_BODY_MB: ${RUNNER_MAX_BODY_MB:-24}
+      RUNNER_MAX_CONNECTIONS: ${RUNNER_MAX_CONNECTIONS:-32}
+      RUNNER_MAX_CONCURRENT_REQUESTS: ${RUNNER_MAX_CONCURRENT_REQUESTS:-8}
+      RUNNER_MAX_CONCURRENT_UPLOADS: ${RUNNER_MAX_CONCURRENT_UPLOADS:-1}
+      RUNNER_MAX_CONCURRENT_JOBS: ${RUNNER_MAX_CONCURRENT_JOBS:-1}
+      RUNNER_TRAINING_TIMEOUT_MS: ${RUNNER_TRAINING_TIMEOUT_MS:-15000}
+    ports:
+      - "4100:4100"
+    volumes:
+      - /var/run/dstack.sock:/var/run/dstack.sock
+      - runner_replay:/var/lib/sirius-runner/replay
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    cpus: 1.0
+    mem_limit: 768m
+    memswap_limit: 768m
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          node -e "require('node:https').get({host:'127.0.0.1',port:4100,path:'/health',rejectUnauthorized:false},res=>process.exit(res.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+volumes:
+  runner_replay:

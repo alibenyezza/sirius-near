@@ -1,0 +1,27 @@
+# Première installation contrôlée uniquement ; ne jamais combiner avec le Compose actif.
+services:
+  initialize-v7:
+    image: ${SIRIUS_RUNNER_IMAGE:?Image v7 immuable requise}
+    restart: "no"
+    read_only: true
+    network_mode: none
+    command: ["node", "--import", "tsx", "scripts/initialize-runner-volume.ts", "/var/lib/sirius-runner"]
+    environment:
+      RUNNER_VOLUME_ACTION: initialize-new-v7-volume
+      EVM_NETWORK: ${EVM_NETWORK:?Réseau EVM requis}
+      SIRIUS_LOCK_AUTHORIZER: ${SIRIUS_LOCK_AUTHORIZER:?Signataire Phala attendu requis}
+      SIRIUS_USDC_ADDRESS: ${SIRIUS_USDC_ADDRESS:?Token testnet attendu requis}
+      SIRIUS_COMPUTE_RECIPIENT: ${SIRIUS_COMPUTE_RECIPIENT:?Trésorerie attendue requise}
+      RUNNER_INITIAL_BUDGET_POLICY: ${RUNNER_INITIAL_BUDGET_POLICY:?Politique comptable approuvée requise}
+      RUNNER_INITIAL_BILLING_POLICY: ${RUNNER_INITIAL_BILLING_POLICY:?Tarif approuvé requis}
+    volumes:
+      - runner_replay:/var/lib/sirius-runner/replay
+      - runner_budget:/var/lib/sirius-runner/budget
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 32
+    cpus: 0.25
+    mem_limit: 256m
+    memswap_limit: 256m

@@ -1,0 +1,4 @@
+# Ne pas éditer à la main. Ce fichier doit être versionné.
+# Il enregistre le moteur pour lequel les migrations ont été écrites : Prisma s'en
+# sert pour refuser d'appliquer du SQL SQLite à une base Postgres, et inversement.
+provider = "postgresql"

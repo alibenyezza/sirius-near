@@ -1,0 +1,61 @@
+# Dependencies
+/node_modules
+.pnpm-store/
+
+# Next.js
+/.next/
+/out/
+/build
+next-env.d.ts
+
+# Production
+/dist
+
+# Prisma — DB locale, jamais commitée (les migrations, elles, sont trackées)
+*.db
+*.db-journal
+/prisma/dev.db
+/prisma/*.db
+
+# Env — secrets jamais commités (seul .env.example est tracké)
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Cache & outils
+.eslintcache
+.turbo
+*.tsbuildinfo
+.vercel
+
+# OS / éditeurs
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Tests / coverage
+/coverage
+/playwright-report
+/test-results
+
+# TEE / clés locales (key-store dev)
+/.keys/
+/.ops/
+*.pem
+
+/src/generated/prisma
+
+# Solidity / Hardhat (artefacts de compilation, jamais commités)
+/contracts/artifacts
+/contracts/cache
+/contracts/typechain-types
+.env*.local

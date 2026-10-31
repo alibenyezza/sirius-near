@@ -1,0 +1,365 @@
+// Schéma Sirius — data lending confidentiel EVM.
+// Doc : https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// Dataset déposé par un provider : chiffré sur IPFS et ancré on-chain.
+model Dataset {
+  id             String        @id @default(cuid())
+  name           String
+  description    String?
+  provider       String // adresse EVM du provider, normalisée en minuscules
+  evmDatasetId    String?       @unique // identifiant bytes32 du titre EVM
+  evmChainId      Int? // chaîne du titre EVM, posée à la publication ; refus d’une base d’une autre chaîne
+  evmMintTxHash   String? // hash de mint confirmé
+  evmMintBlock    String? // bloc de mint, borne les recherches d'événements
+  evmDestroyTxHash String? // hash de tombstone confirmé
+  deletionReconciledAt DateTime? // fin de suppression applicative ; distincte d'une preuve de transaction EVM
+  ipfsCid        String? // CID du blob chiffré (AES-256-GCM) sur Pinata
+  wrappedKey     String? // DEK enveloppée ; sa suppression active ne purge pas les sauvegardes.
+  merkleRoot     String? // racine Merkle des chunks (intégrité)
+  sizeBytes      Int?
+  priceUsdcAtomic String // prix en unités atomiques USDC (précision selon le réseau, cf. USDC_DECIMALS_BY_NETWORK)
+  challengeDays  Int           @default(7) // délai avant remboursement possible
+  modelId        String?
+  modelVersion   String?
+  metrics        Json? // métriques en clair (stats, fraîcheur, schéma, complétude)
+  runnerReceipt  String? // reçu signé par l'enclave : lie owner + CID + Merkle + wrappedKey
+  runnerKind     RunnerKind @default(UNKNOWN)
+  runnerDeploymentId String?
+  status         DatasetStatus @default(DRAFT)
+  listedAt       DateTime? // dernière mise au catalogue (statut LISTED), affichée sur la marketplace
+  keyDestroyedAt DateTime? // suppression de la copie active de DEK enveloppée
+  // Catalogue (passage au mainnet). La pause d'un dataset n'a pas de colonne dédiée :
+  // elle fait passer `status` de LISTED à UNLISTED, et la reprise l'inverse.
+  category         String? // catégorie de la liste fixe de l'upload, filtre de la marketplace
+  listingExpiresAt DateTime? // fin de la durée de publication ; absent = publié avant ce champ
+  // Consentement facultatif à l'amélioration des modèles, daté et versionné ; la révocation
+  // garde la trace du consentement initial au lieu de l'effacer.
+  trainingConsentAt        DateTime?
+  trainingConsentVersion   String?
+  trainingConsentRevokedAt DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  loans        Loan[]
+  keyGrants    KeyGrant[]
+  trainingJobs TrainingJob[]
+  accessLogs   DatasetAccessLog[]
+
+  @@index([provider])
+  @@index([status])
+}
+
+/// Journal des accès à un dataset, déclaré dans les conditions d'utilisation : qui a reçu
+/// quel modèle, pour quel prêt. Écrit à la livraison du modèle, lu par l'admin seulement.
+model DatasetAccessLog {
+  id               String   @id @default(cuid())
+  datasetId        String
+  dataset          Dataset  @relation(fields: [datasetId], references: [id])
+  loanId           String? // identifiant du prêt, sans clé étrangère : le journal survit à tout nettoyage
+  address          String // wallet destinataire, en minuscules
+  modelCid         String? // CID du modèle livré
+  modelFingerprint String? // empreinte du modèle livré, pour relier un modèle qui circulerait
+  createdAt        DateTime @default(now()) // purgée après 24 mois par le reaper (access-log-retention.ts)
+
+  @@index([datasetId])
+  @@index([address])
+  @@index([createdAt])
+}
+
+/// Profil d'un wallet : tutos, réglages, cache d'affichage du KYB et blocage côté site.
+/// Créé à la première connexion réussie ; un wallet ne lit et ne modifie que le sien.
+model UserProfile {
+  address         String    @id // adresse EVM en minuscules, jamais en forme EIP-55
+  tourCompletedAt DateTime? // tuto de première connexion terminé
+  featureTours    Json      @default("{}") // tutos par page déjà vus : { dashboard: true, … }
+  settings        Json      @default("{}") // réglages : { language: "en", sidebarCollapsed: false }
+  kybStatus       String? // cache d'affichage ; la source de vérité reste le contrat
+  kybCheckedAt    DateTime?
+  blockedAt       DateTime? // blocage côté site, posé par l'admin uniquement
+  blockedReason   String?
+  blockedBy       String?
+  createdAt       DateTime  @default(now())
+  lastSeenAt      DateTime  @default(now())
+}
+
+/// Self-train (MLaaS) : entraînement sur SON PROPRE dataset, sans escrow ni
+/// fair-exchange (aucun tiers à payer, cf. D-19). Le TEE rend le modèle au propriétaire.
+model TrainingJob {
+  id        String  @id @default(cuid())
+  datasetId String
+  dataset   Dataset @relation(fields: [datasetId], references: [id])
+  owner     String // adresse EVM du propriétaire (== dataset.provider)
+  modelId   String  @default("linear_regression")
+  modelVersion String @default("1.0.0")
+
+  modelCid      String? // modèle entraîné (chiffré) livré au propriétaire
+  metrics       Json? // métriques en clair (R², RMSE…)
+  runnerReceipt String? // reçu enclave requis pour toute re-livraison de clé
+  deliveryPublicKey String?
+  deliveryEnvelope Json?
+  runnerKind    RunnerKind @default(UNKNOWN)
+  runnerDeploymentId String?
+
+  status      TrainingStatus @default(PENDING)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  completedAt DateTime?
+
+  @@index([datasetId])
+  @@index([owner])
+  @@index([status])
+}
+
+/// Emprunt d'accès : escrow USDC conditionnel + job TEE.
+model Loan {
+  id        String  @id @default(cuid())
+  datasetId String
+  dataset   Dataset @relation(fields: [datasetId], references: [id])
+  borrower  String // adresse EVM de l'emprunteur
+  provider  String // adresse EVM du provider (dénormalisé pour les requêtes)
+  amountUsdcAtomic String // montant USDC en unités atomiques
+  billingQuote String? // devis signé v7 complet, immuable après préparation
+  billingQuoteHash String?
+  datasetAmountUsdcAtomic String?
+  computeAmountUsdcAtomic String?
+  maxFailureFeeUsdcAtomic String?
+  retainedFeeUsdcAtomic String?
+  refundAmountUsdcAtomic String?
+  modelId   String @default("linear_regression")
+  modelVersion String @default("1.0.0")
+
+  // Escrow USDC conditionnel
+  evmLoanKey       String? @unique // clé bytes32 du prêt EVM
+  evmHashlock      String? // SHA-256 du préimage TEE
+  evmLockTxHash    String? // hash du lock ERC-20 soumis, confirmé quand le prêt est ESCROWED
+  evmLockBlock     String? // bloc de lock, borne la lecture des événements
+  evmDeadline      DateTime?
+  evmChainId       Int?
+  evmEscrowAddress String?
+  evmPreparedBlock String?
+
+  // Résultat TEE préparé avant le release atomique
+  jobId                  String?
+  modelCid               String? // modèle entraîné chiffré, produit avant le règlement
+  attestationHash        String? // SHA-256 du payload TEE attesté
+  attestationPayload     String? // payload canonique lié au modèle, scope et hash de capsule
+  attestationQuote       String? // quote TDX matérielle (hex), mode phala — vérif externe (3d.2)
+  attestationEventLog    String? // event-log mesuré, rejoué contre RTMR3
+  attestationComposeHash String? // compose_hash lié à l'event-log
+  runnerReceipt          String? // reçu enclave : lie borrower + modèle + escrow validé
+  runnerKind             RunnerKind @default(UNKNOWN)
+  runnerDeploymentId     String?
+  settleTxHash           String? // release USDC
+  auditReceipt           String? // signature HMAC de l'attestation runner
+  cancelTxHash           String? // remboursement USDC confirmé après expiration
+
+  // Finalité rapide (src/lib/evm/fast-finality.ts) : palier décidé au lancement de l'entraînement,
+  // appliqué aussi au règlement ; un prêt FAST réglé est revérifié à finalité complète par le reaper.
+  finalityTier       FinalityTier @default(FULL)
+  finalityVerifiedAt DateTime? // release FAST confirmé sous le bloc finalisé
+  finalityReview     String? // divergence constatée à finalité complète : motif, revue manuelle
+  finalityReviewAt   DateTime?
+  // Preuves de rediffusion d'un release rapide (settlement-evidence.ts) : transaction signée brute
+  // et préimage public, pour qu'un opérateur rejoue le release si une réorganisation l'efface.
+  settleRawTx        String?
+  settlePreimage     String?
+
+  status    LoanStatus @default(PENDING)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  settledAt DateTime?
+
+  keyGrants KeyGrant[]
+
+  @@index([datasetId])
+  @@index([borrower])
+  @@index([status])
+  @@index([provider, status])
+  @@index([borrower, status])
+  @@index([finalityTier, status])
+}
+
+/// Octroi de la clé de déchiffrement au TEE pour un job donné.
+model KeyGrant {
+  id        String         @id @default(cuid())
+  datasetId String
+  dataset   Dataset        @relation(fields: [datasetId], references: [id])
+  loanId    String?
+  loan      Loan?          @relation(fields: [loanId], references: [id])
+  grantee   String // destinataire (enclave TEE)
+  keyRef    String // référence vers le key-store (jamais la clé en clair)
+  status    KeyGrantStatus @default(PENDING)
+  createdAt DateTime       @default(now())
+  revokedAt DateTime?
+
+  @@index([datasetId])
+  @@index([loanId])
+}
+
+/// KYB EIP-712 accepté on-chain.
+model Credential {
+  id               String           @id @default(cuid())
+  subject          String // adresse EVM du sujet
+  credType         String // type de credential (ex: "KYB")
+  issuer           String // adresse EVM du vérificateur
+  txHash           String?
+  status           CredentialStatus @default(PENDING)
+  createdAt        DateTime         @default(now())
+  acceptedAt       DateTime?
+  evmVerifier      String?
+  evmExpiresAt     DateTime?
+  evmAttestationTxHash String?
+
+  @@unique([subject, credType])
+  @@index([subject])
+}
+
+/// Nonce d'authentification consommable une seule fois.
+model AuthChallenge {
+  nonce     String   @id
+  address   String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
+}
+
+/// Grant P-256 de mutation consommé une fois, persistant entre les redémarrages Next.
+model MutationGrant {
+  nonce     String   @id
+  address   String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
+}
+
+/// Tentatives de code opérateur, inscrites avant vérification : le plafond d'essais tient
+/// entre toutes les instances serverless. Seuls les échecs restent dans la fenêtre.
+model OperatorCodeAttempt {
+  id        String   @id @default(cuid())
+  address   String
+  createdAt DateTime @default(now())
+
+  @@index([address, createdAt])
+}
+
+/// Compteurs quotidiens de l'assistant Sirio : requêtes (SIRIUS_ASSISTANT_DAILY_CAP), jetons
+/// et dépense estimée en micro-dollars (SIRIUS_ASSISTANT_DAILY_BUDGET_USD). Une ligne par jour
+/// UTC, jamais de contenu de message.
+model AssistantUsage {
+  day              String   @id // jour UTC, AAAA-MM-JJ
+  count            Int      @default(0)
+  inputTokens      Int      @default(0)
+  outputTokens     Int      @default(0)
+  cacheReadTokens  Int      @default(0)
+  cacheWriteTokens Int      @default(0)
+  spentMicroUsd    Int      @default(0) // 1 $ = 1 000 000
+  updatedAt        DateTime @default(now()) @updatedAt
+}
+
+/// Questions par jour et par client de l'assistant (SIRIUS_ASSISTANT_DAILY_PER_IP) : `id` est le
+/// jour suivi de l'empreinte SHA-256 de l'adresse IP transmise par l'ingress ou du wallet signé,
+/// jamais la valeur en clair. Les lignes d'avant-hier sont supprimées au fil de l'eau.
+model AssistantClientUsage {
+  id    String @id
+  day   String
+  count Int    @default(0)
+
+  @@index([day])
+}
+
+/// Invitation KYB signée par le vérificateur automatique (accès instantané) : trace de
+/// l'émission et plafonds (1 par wallet et par 24 h, N par IP et par heure, N par heure).
+/// Le code n'est pas un secret : il ne vaut que pour son adresse, une seule fois, et expire.
+/// L'IP n'est posée que si l'ingress la transmet ; le reaper supprime les lignes après 48 h.
+model KybAutoInvite {
+  id        String   @id @default(cuid())
+  subject   String // adresse EVM canonique (minuscules)
+  code      String
+  ip        String? // adresse cliente de confiance (SIRIUS_TRUST_PROXY_HEADERS), sinon null
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([subject, createdAt])
+  @@index([ip, createdAt])
+  @@index([createdAt])
+}
+
+/// Réputation dérivée des events on-chain (calcul léger au MVP).
+model Reputation {
+  id             String          @id @default(cuid())
+  address        String
+  role           ParticipantRole
+  score          Float           @default(0)
+  completedLoans Int             @default(0)
+  disputes       Int             @default(0)
+  updatedAt      DateTime        @updatedAt
+
+  @@unique([address, role])
+}
+
+enum DatasetStatus {
+  DRAFT // métadonnées créées, pas encore on-chain
+  LISTING // publication EVM en cours
+  LISTED // « Public » : titre EVM minté, visible marketplace, empruntable
+  UNLISTED // « Semi-privé » : hors catalogue, empruntable par lien direct
+  PRIVATE // « Privé » : provider seul (self-train), invisible et non-empruntable par des tiers
+  SUSPENDED
+  DELETED // clé active supprimée ; ligne gardée pour l'audit
+}
+
+enum RunnerKind {
+  UNKNOWN
+  DEVELOPMENT
+  PHALA
+}
+
+enum LoanStatus {
+  PENDING // créé, escrow pas encore posé
+  SUBMITTING // lock USDC envoyé, confirmation en cours
+  ESCROWED // lock USDC confirmé, fonds bloqués
+  TRAINING // job en cours ou capsule prête avant règlement
+  SETTLING // release USDC soumis ou à réconcilier
+  SETTLED // release USDC validé, capsule déverrouillable
+  CANCELLED // réservation abandonnée ou remboursement USDC confirmé
+}
+
+/// Palier de finalité d'un prêt (src/lib/evm/fast-finality.ts).
+enum FinalityTier {
+  FULL // bloc finalisé (mainnet) ou politique historique
+  FAST // N confirmations L2 avec contrôle canonique, petits prêts seulement
+}
+
+enum TrainingStatus {
+  PENDING // job créé
+  RUNNING // calcul TEE en cours
+  DONE // modèle livré
+  FAILED // échec du calcul
+}
+
+enum KeyGrantStatus {
+  PENDING
+  GRANTED
+  REVOKED
+}
+
+enum CredentialStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+}
+
+enum ParticipantRole {
+  PROVIDER
+  BORROWER
+}

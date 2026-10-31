@@ -1,0 +1,210 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0b0b0b;
+  --surface: #131313;
+  --foreground: #e8e8e8;
+  --muted: #888888;
+  --muted-foreground: #505050;
+  --accent: #fafafa;
+  --positive: #34d399;
+  --negative: #f87171;
+  --border: #1e1e1e;
+  /* Barres de défilement des panneaux (chat, listes, menus) : fines, sombres, translucides. */
+  --scrollbar-thumb: rgba(255, 255, 255, 0.14);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.28);
+  --scrollbar-track: transparent;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-positive: var(--positive);
+  --color-negative: var(--negative);
+  --color-border: var(--border);
+  --font-sans: "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --radius-lg: 2rem;
+  --radius-xl: 2rem;
+  --radius-2xl: 2rem;
+}
+
+html,
+body {
+  overscroll-behavior: none;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  overflow-x: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+body::-webkit-scrollbar {
+  display: none;
+}
+
+/* Barres de défilement des panneaux internes (chat, zones de saisie, menus, listes) : la barre
+   blanche native jurait sur le thème sombre.
+   - `html` est exclu : la barre de la page (le viewport) garde son rendu natif d'avant.
+   - `:where()` ramène la spécificité à zéro : la règle propre de `body` (barre masquée) et
+     `.scrollbar-quiet` l'emportent toujours.
+   - Firefox et Chromium 121+ lisent `scrollbar-width` / `scrollbar-color` ; dès que ces
+     propriétés sont posées, Chromium ignore les `::-webkit-scrollbar`. Elles ne le sont donc
+     que là où `scrollbar-color` est reconnu, et Safari, qui ne le reconnaît pas, garde les
+     pseudo-éléments `::-webkit-scrollbar` ci-dessous. */
+@supports (scrollbar-color: auto) {
+  :where(:not(html)) {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  }
+}
+
+:where(:not(html))::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+:where(:not(html))::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+:where(:not(html))::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-color: var(--scrollbar-thumb);
+  background-clip: padding-box;
+}
+
+:where(:not(html))::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
+}
+
+:where(:not(html))::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Zone de saisie qui grandit avec le texte : pas de barre tant que la hauteur maximale n'est
+   pas atteinte (`overflow` posé par le composant), puis la barre fine ci-dessus. */
+.scrollbar-quiet {
+  scrollbar-color: transparent transparent;
+}
+
+.scrollbar-quiet:hover,
+.scrollbar-quiet:focus-within,
+.scrollbar-quiet:focus {
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+.scrollbar-quiet::-webkit-scrollbar-thumb {
+  background-color: transparent;
+}
+
+.scrollbar-quiet:hover::-webkit-scrollbar-thumb,
+.scrollbar-quiet:focus::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+}
+
+/* Sur un écran tactile, Safari iOS zoome sur tout champ dont la police fait moins de
+   16 px, et l'utilisateur se retrouve à devoir dézoomer après chaque saisie. La règle est
+   hors couche exprès : elle doit l'emporter sur les utilitaires `text-sm` des champs. */
+@media (hover: none) and (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 200ms ease-out;
+}
+
+/* Panneau de conversation Sirio : surgit depuis la bulle (bas droite), se range de même. */
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes panel-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(12px) scale(0.96);
+  }
+}
+
+.animate-panel-in {
+  transform-origin: bottom right;
+  animation: panel-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.animate-panel-out {
+  transform-origin: bottom right;
+  animation: panel-out 180ms ease-in forwards;
+}
+
+/* Guide Sirio (src/components/guide/GuideBlob.tsx) : respiration du noyau, rebond de joie,
+   orbite des particules et clignement. Les composants n'appliquent ces animations que si
+   `prefers-reduced-motion` n'est pas demandé. */
+@keyframes guide-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.06);
+  }
+}
+
+@keyframes guide-bounce {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  40% {
+    transform: translateY(-6px) scale(1.05, 0.96);
+  }
+}
+
+@keyframes guide-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes guide-blink {
+  0%,
+  92%,
+  100% {
+    transform: scaleY(1);
+  }
+  95% {
+    transform: scaleY(0.1);
+  }
+}

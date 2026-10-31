@@ -1,0 +1,61 @@
+# Image du reaper autonome, destinée au VPS.
+#
+# L'application Next est hébergée en serverless : aucun processus n'y survit entre
+# deux requêtes, donc rien ne peut réconcilier les prêts en arrière-plan. Ce conteneur
+# est ce processus permanent. Il attaque la même base que l'application et ne détient
+# aucun secret d'enclave — il ne fait que lire des états et appeler la chaîne.
+#
+# Trois étages plutôt que deux, contrairement à Dockerfile.runner : le worker a besoin
+# du client Prisma généré, or la CLI qui le génère est une dépendance de développement
+# et `src/generated/prisma` est exclu du contexte de build. Il faut donc une étape avec
+# les dépendances complètes, sans pour autant les embarquer dans l'image finale.
+
+FROM node:22-bookworm-slim AS build
+
+ENV PNPM_CONFIG_FETCH_RETRIES=5
+ENV PNPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000
+ENV PNPM_CONFIG_FETCH_TIMEOUT=300000
+ENV PNPM_CONFIG_NETWORK_CONCURRENCY=8
+WORKDIR /workspace
+RUN corepack enable
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json prisma.config.ts ./
+COPY prisma ./prisma
+RUN --mount=type=cache,id=sirius-worker-corepack,target=/root/.cache/node/corepack,sharing=locked \
+    --mount=type=cache,id=sirius-worker-pnpm-store,target=/root/.local/share/pnpm/store,sharing=locked \
+    pnpm install --frozen-lockfile --ignore-scripts
+
+# `prisma generate` lit l'URL sans jamais s'y connecter : la valeur ci-dessous n'est
+# qu'un gabarit valide, remplacé à l'exécution par la vraie variable d'environnement.
+# Elle ne doit désigner aucune base réelle, et n'en désigne aucune.
+ENV DATABASE_URL="postgresql://build:build@localhost:5432/build?schema=public"
+RUN pnpm exec prisma generate
+
+FROM node:22-bookworm-slim AS prod-deps
+
+ENV PNPM_CONFIG_FETCH_RETRIES=5
+ENV PNPM_CONFIG_FETCH_TIMEOUT=300000
+WORKDIR /workspace
+RUN corepack enable
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN --mount=type=cache,id=sirius-worker-corepack,target=/root/.cache/node/corepack,sharing=locked \
+    --mount=type=cache,id=sirius-worker-pnpm-store,target=/root/.local/share/pnpm/store,sharing=locked \
+    pnpm install --prod --frozen-lockfile --ignore-scripts
+
+FROM node:22-bookworm-slim AS worker
+
+ENV NODE_ENV=production
+ENV NODE_OPTIONS="--conditions=react-server --max-old-space-size=384"
+WORKDIR /workspace
+
+COPY --from=prod-deps --chown=node:node /workspace/node_modules ./node_modules
+COPY --from=build --chown=node:node /workspace/package.json /workspace/tsconfig.json ./
+COPY --chown=node:node src ./src
+COPY --from=build --chown=node:node /workspace/src/generated ./src/generated
+
+USER node
+
+# Pas de port exposé : le reaper n'accepte aucune connexion entrante. Il lit la base,
+# interroge la chaîne, et c'est tout. Rien à joindre depuis l'extérieur.
+CMD ["node", "--import", "tsx", "src/worker/reaper.ts"]

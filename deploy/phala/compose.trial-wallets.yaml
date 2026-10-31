@@ -1,0 +1,22 @@
+services:
+  add-trial-wallets:
+    image: ${SIRIUS_RUNNER_IMAGE:?Image v7 immuable requise}
+    restart: "no"
+    read_only: true
+    network_mode: none
+    command: ["node", "--import", "tsx", "scripts/add-runner-trial-wallets.ts", "/var/lib/sirius-runner/budget/ledger.sqlite"]
+    environment:
+      RUNNER_VOLUME_ACTION: add-trial-wallets
+      SIRIUS_LOCK_AUTHORIZER: ${SIRIUS_LOCK_AUTHORIZER:?Signataire attendu requis}
+      SIRIUS_ESCROW_ADDRESS: ${SIRIUS_ESCROW_ADDRESS:?Escrow staging attendu requis}
+      RUNNER_ADDITIONAL_TRIAL_WALLETS: ${RUNNER_ADDITIONAL_TRIAL_WALLETS:?Liste JSON des adresses à ajouter requise}
+    volumes:
+      - runner_budget:/var/lib/sirius-runner/budget
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 32
+    cpus: 0.25
+    mem_limit: 256m
+    memswap_limit: 256m

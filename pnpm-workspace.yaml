@@ -1,0 +1,70 @@
+allowBuilds:
+  '@prisma/engines': true
+  better-sqlite3: true
+  ed25519: false
+  esbuild: true
+  keccak: false
+  prisma: true
+  protobufjs: false
+  secp256k1: false
+  sharp: true
+  tiny-secp256k1: false
+  unrs-resolver: true
+overrides:
+  # @phala/dstack-sdk 0.5.8 exige @noble/hashes@^1.6.1 (subpaths /sha256 /sha512), mais le
+  # projet embarque la v2 (subpaths renommés) → épingle l'arête du SDK sur la 1.x compatible.
+  '@phala/dstack-sdk>@noble/hashes': '1.8.0'
+  '@segment/analytics-next>js-cookie': '3.0.7'
+  '@prisma/dev>@hono/node-server': '1.19.15'
+  'fast-uri@>=3.0.0 <3.1.8': '3.1.8'
+  'next>sharp': '0.35.5'
+  'postcss@>=8.0.0 <8.5.23': '8.5.23'
+  'protobufjs@>=7.5.0 <7.6.5': '7.6.5'
+  'ws@>=8.0.0 <8.21.0': '8.21.0'
+  'bn.js@>=4 <4.12.3': '4.12.3'
+  'lodash@<4.17.24': '4.18.1'
+  'brace-expansion@>=1 <1.1.21': '1.1.21'
+  'brace-expansion@>=2 <2.1.7': '2.1.7'
+  'brace-expansion@>=4 <5.0.12': '5.0.12'
+  'valibot@>=1 <1.4.2': '1.4.2'
+  'hono@>=4 <4.13.7': '4.13.7'
+  'nanoid@>=3 <3.3.18': '3.3.18'
+  'browserslist@>=4 <4.28.7': '4.28.7'
+  'mysql2@>=3 <3.23.1': '3.23.1'
+  'qs@>=6 <6.16.0': '6.16.0'
+  'baseline-browser-mapping@>=2 <2.11.0': '2.11.0'
+  'js-yaml@>=3 <3.15.2': '3.15.2'
+  'js-yaml@>=4 <4.3.2': '4.3.2'
+  '@sentry/node>cookie': '0.7.2'
+  'solc>tmp': '0.2.7'
+  'hardhat>undici': '6.28.1'
+  'diff@>=7 <8.0.3': '8.0.3'
+  'mocha>serialize-javascript': '7.0.5'
+  'hardhat>uuid': '11.1.1'
+  # Même avis que ci-dessus (GHSA-w5hq-g745-h8pq), par l'arête que le SDK de
+  # connexion sociale amène : @web3auth/modal > @metamask/* > @metamask/utils > uuid 9.
+  '@metamask/utils>uuid': '11.1.1'
+  'hardhat>adm-zip': '0.6.1'
+  '@prisma/config>deepmerge-ts': '8.0.0'
+  '@nomicfoundation/hardhat-verify>undici': '6.28.1'
+  # eth-gas-reporter (outillage Hardhat de développement) embarque axios sous avis high.
+  'axios@>=1 <1.20.0': '1.20.0'
+  # Déni de service par offsets de sections indexées (GHSA-68fv-2mgg-jv7q), atteint via postcss.
+  'source-map-js@>=1 <1.2.2': '1.2.2'
+  # Avis du 7 octobre 2026 : librsvg via sharp (GHSA-wq5f-xc86-pv6w) et pbkdf2 (GHSA-477h-4r7f-fvrx).
+  'pbkdf2@<3.1.7': '3.1.7'
+  # Avis du 5 octobre 2026 : handlebars (GHSA-8r5x-fm3f-whwj, GHSA-p8wg-vrv2-v86f, GHSA-xw65-4hp5-5hc7),
+  # atteint uniquement par l'outillage Solidity de développement (solidity-coverage > sc-istanbul).
+  'handlebars@>=4 <4.7.10': '4.7.10'
+auditConfig:
+  ignoreGhsas:
+    # braces <= 3.0.3 (déni de service par motifs imbriqués), publiée le 3 octobre 2026 sans
+    # version corrigée disponible sur npm. Atteint uniquement par l'outillage Solidity de
+    # développement (hardhat-toolbox-viem, solidity-coverage) : `pnpm audit --prod` ne la voit pas.
+    # À retirer dès que braces 3.0.4 est publiée et passe la politique d'âge minimal.
+    - GHSA-vfj7-8cjw-p6xm
+    # sprintf-js <= 1.1.3 (déni de service par précision non bornée), avis du 6 octobre 2026 qui
+    # annonce une 1.1.4 non publiée sur npm. Atteint uniquement par l'outillage Solidity de
+    # développement (solidity-coverage > js-yaml > argparse) : `pnpm audit --prod` ne la voit pas.
+    # À retirer dès que sprintf-js 1.1.4 est publiée.
+    - GHSA-hp3w-g68c-fv3c

@@ -1,0 +1,129 @@
+name: sirius-dev
+
+services:
+  runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      target: runner
+    init: true
+    read_only: true
+    environment:
+      NODE_ENV: development
+      DSTACK_SIMULATOR_ENDPOINT: ${DSTACK_SIMULATOR_ENDPOINT:-}
+      PINATA_GATEWAY: ${PINATA_GATEWAY:-https://gateway.pinata.cloud}
+      PINATA_JWT: ${PINATA_JWT:-}
+      NODE_OPTIONS: --conditions=react-server --max-old-space-size=384
+      RUNNER_MAX_BODY_MB: ${RUNNER_MAX_BODY_MB:-24}
+      RUNNER_MAX_CONNECTIONS: ${RUNNER_MAX_CONNECTIONS:-32}
+      RUNNER_MAX_CONCURRENT_REQUESTS: ${RUNNER_MAX_CONCURRENT_REQUESTS:-8}
+      RUNNER_MAX_CONCURRENT_UPLOADS: ${RUNNER_MAX_CONCURRENT_UPLOADS:-1}
+      RUNNER_MAX_CONCURRENT_JOBS: ${RUNNER_MAX_CONCURRENT_JOBS:-1}
+      RUNNER_TRAINING_TIMEOUT_MS: ${RUNNER_TRAINING_TIMEOUT_MS:-15000}
+      RUNNER_PORT: 4100
+      RUNNER_REPLAY_DIR: /var/lib/sirius-runner/replay
+      RUNNER_TRANSPORT_SECRET: ${RUNNER_TRANSPORT_SECRET:?RUNNER_TRANSPORT_SECRET requis}
+      RUNNER_URL: ""
+      SIRIUS_APP_ORIGIN: http://localhost:3000
+      SIRIUS_EXPECTED_COMPOSE_HASH: ${SIRIUS_EXPECTED_COMPOSE_HASH:-}
+      SIRIUS_EXPECTED_MASTER_KEY_CHAIN_SHA256: ${SIRIUS_EXPECTED_MASTER_KEY_CHAIN_SHA256:-}
+      SIRIUS_EXPECTED_MRTD: ${SIRIUS_EXPECTED_MRTD:-}
+      SIRIUS_EXPECTED_RTMR3: ${SIRIUS_EXPECTED_RTMR3:-}
+      SIRIUS_MASTER_KEY: ${SIRIUS_MASTER_KEY:?SIRIUS_MASTER_KEY requise en mode stub}
+      TEE_MODE: stub
+      EVM_NETWORK: ${EVM_NETWORK:-testnet}
+      EVM_RPC_URL: ${EVM_RPC_URL:-https://rpc.testnet.chain.robinhood.com}
+      SIRIUS_ESCROW_ADDRESS: ${SIRIUS_ESCROW_ADDRESS:-}
+      SIRIUS_USDC_ADDRESS: ${SIRIUS_USDC_ADDRESS:-}
+      SIRIUS_KYB_ADDRESS: ${SIRIUS_KYB_ADDRESS:-}
+      SIRIUS_DATASET_ADDRESS: ${SIRIUS_DATASET_ADDRESS:-}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4100/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+      start_period: 5s
+    ports:
+      - "127.0.0.1:4100:4100"
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    volumes:
+      - runner_replay:/var/lib/sirius-runner
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    cpus: 1.0
+    mem_limit: 768m
+    memswap_limit: 768m
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      target: app
+    init: true
+    read_only: true
+    command: ["sh", "-c", "node node_modules/prisma/build/index.js migrate deploy && exec node node_modules/next/dist/bin/next dev --webpack -H 0.0.0.0"]
+    environment:
+      DATABASE_URL: file:/workspace/data/dev.db
+      MOONPAY_SECRET_KEY: ${MOONPAY_SECRET_KEY:-}
+      NEXT_PUBLIC_MOONPAY_PUBLISHABLE_KEY: ${NEXT_PUBLIC_MOONPAY_PUBLISHABLE_KEY:-}
+      NEXT_PUBLIC_SIRIUS_INGRESS_KEY_SHA256: ${NEXT_PUBLIC_SIRIUS_INGRESS_KEY_SHA256:-}
+      NEXT_PUBLIC_EVM_NETWORK: ${NEXT_PUBLIC_EVM_NETWORK:-testnet}
+      NEXT_PUBLIC_SIRIUS_ESCROW_ADDRESS: ${NEXT_PUBLIC_SIRIUS_ESCROW_ADDRESS:-}
+      NEXT_PUBLIC_SIRIUS_USDC_ADDRESS: ${NEXT_PUBLIC_SIRIUS_USDC_ADDRESS:-}
+      NEXT_PUBLIC_SIRIUS_KYB_ADDRESS: ${NEXT_PUBLIC_SIRIUS_KYB_ADDRESS:-}
+      NEXT_PUBLIC_SIRIUS_DATASET_ADDRESS: ${NEXT_PUBLIC_SIRIUS_DATASET_ADDRESS:-}
+      NODE_ENV: development
+      PINATA_GATEWAY: ${PINATA_GATEWAY:-https://gateway.pinata.cloud}
+      PINATA_JWT: ${PINATA_JWT:-}
+      RUNNER_TRANSPORT_SECRET: ${RUNNER_TRANSPORT_SECRET:?RUNNER_TRANSPORT_SECRET requis}
+      RUNNER_URL: http://runner:4100
+      EVM_NETWORK: ${EVM_NETWORK:-testnet}
+      EVM_RPC_URL: ${EVM_RPC_URL:-https://rpc.testnet.chain.robinhood.com}
+      SIRIUS_ESCROW_ADDRESS: ${SIRIUS_ESCROW_ADDRESS:-}
+      SIRIUS_USDC_ADDRESS: ${SIRIUS_USDC_ADDRESS:-}
+      SIRIUS_KYB_ADDRESS: ${SIRIUS_KYB_ADDRESS:-}
+      SIRIUS_DATASET_ADDRESS: ${SIRIUS_DATASET_ADDRESS:-}
+      SIRIUS_APP_ORIGIN: http://localhost:3000
+      SIRIUS_MAX_CONCURRENT_UPLOADS: ${SIRIUS_MAX_CONCURRENT_UPLOADS:-2}
+      SIRIUS_REAPER_ENABLED: "true"
+      SIRIUS_REAPER_INTERVAL_MS: ${SIRIUS_REAPER_INTERVAL_MS:-30000}
+      SIRIUS_TRUST_PROXY_HEADERS: "false"
+      SIRIUS_SESSION_SECRET: ${SIRIUS_SESSION_SECRET:?SIRIUS_SESSION_SECRET requis}
+      TEE_MODE: stub
+    depends_on:
+      runner:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    ports:
+      - "127.0.0.1:3000:3000"
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+      - /workspace/.next:size=1g,mode=1777
+    volumes:
+      - ./next-env.d.ts:/workspace/next-env.d.ts
+      - ./next.config.ts:/workspace/next.config.ts:ro
+      - ./postcss.config.mjs:/workspace/postcss.config.mjs:ro
+      - app_data:/workspace/data
+      - ./public:/workspace/public:ro
+      - ./src:/workspace/src:ro
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    cpus: 1.5
+    mem_limit: 4g
+    memswap_limit: 4g
+
+volumes:
+  runner_replay:
+  app_data:

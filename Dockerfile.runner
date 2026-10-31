@@ -1,0 +1,37 @@
+FROM node:22-bookworm-slim AS dependencies
+
+ENV PNPM_CONFIG_FETCH_RETRIES=5
+ENV PNPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000
+ENV PNPM_CONFIG_FETCH_TIMEOUT=300000
+ENV PNPM_CONFIG_NETWORK_CONCURRENCY=8
+WORKDIR /workspace
+RUN corepack enable
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
+COPY prisma ./prisma
+RUN --mount=type=cache,id=sirius-runner-corepack,target=/root/.cache/node/corepack,sharing=locked \
+    --mount=type=cache,id=sirius-runner-pnpm-store,target=/root/.local/share/pnpm/store,sharing=locked \
+    pnpm install --prod --frozen-lockfile --ignore-scripts
+
+FROM node:22-bookworm-slim AS runner
+
+ENV NODE_ENV=production
+ENV NODE_OPTIONS="--conditions=react-server --max-old-space-size=384"
+WORKDIR /workspace
+
+COPY --from=dependencies --chown=node:node /workspace/node_modules ./node_modules
+COPY --from=dependencies --chown=node:node /workspace/package.json /workspace/tsconfig.json ./
+COPY --chown=node:node src ./src
+COPY --chown=node:node scripts/runner-budget.ts ./scripts/runner-budget.ts
+COPY --chown=node:node scripts/runner-replay.ts ./scripts/runner-replay.ts
+COPY --chown=node:node scripts/initialize-runner-volume.ts ./scripts/initialize-runner-volume.ts
+COPY --chown=node:node scripts/add-runner-trial-wallets.ts ./scripts/add-runner-trial-wallets.ts
+COPY --chown=node:node scripts/runner-transactions.ts ./scripts/runner-transactions.ts
+COPY --chown=node:node scripts/check-runner-finality.ts ./scripts/check-runner-finality.ts
+RUN mkdir -p /var/lib/sirius-runner/replay /var/lib/sirius-runner/budget \
+    && chmod 700 /var/lib/sirius-runner/budget /var/lib/sirius-runner/replay \
+    && chown -R node:node /var/lib/sirius-runner
+
+USER node
+EXPOSE 4100
+CMD ["node", "--import", "tsx", "src/runner/start.ts"]

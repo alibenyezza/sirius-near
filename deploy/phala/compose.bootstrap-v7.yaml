@@ -1,0 +1,10 @@
+services:
+  runner:
+    image: ${SIRIUS_RUNNER_IMAGE:?Image v7 immuable requise}
+    environment:
+      RUNNER_BOOTSTRAP_ONLY: "true"
+    volumes:
+      - runner_budget:/var/lib/sirius-runner/budget
+
+volumes:
+  runner_budget:

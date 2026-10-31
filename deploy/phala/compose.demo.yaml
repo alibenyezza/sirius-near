@@ -1,0 +1,14 @@
+# Fusionner après compose.yaml et compose.v7.yaml ; volumes distincts des anciens essais.
+services:
+  runner:
+    environment:
+      SIRIUS_PHALA_DEMO: "true"
+      EVM_NETWORK: testnet
+      RUNNER_DEMO_SESSION_FILE: /var/lib/sirius-runner/budget/demo-sessions.sqlite
+      RUNNER_DEMO_CONTROL_SECRET: ${RUNNER_DEMO_CONTROL_SECRET:?Secret opérateur dédié requis}
+
+volumes:
+  runner_budget:
+    name: sirius_phala_demo_budget
+  runner_replay:
+    name: sirius_phala_demo_replay
