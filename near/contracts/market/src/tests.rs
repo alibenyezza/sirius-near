@@ -462,3 +462,108 @@ fn privacy_audit_is_recorded_by_holder() {
     m.set_privacy_audit(id.clone(), HASH.into(), "some/model".into(), HASH.into());
     assert_eq!(m.get_dataset(id).unwrap().privacy_audit.unwrap().model, "some/model");
 }
+
+// ---------- agent budgets ----------
+
+const AGENT: &str = "agent.testnet";
+
+fn fund(env: &Env, m: &mut Market, near: u128, max_per_order: u128) {
+    env.call(CAROL, NearToken::from_near(near));
+    m.fund_agent(acc(AGENT), U128(NearToken::from_near(max_per_order).as_yoctonear()));
+}
+
+#[test]
+fn agent_pays_from_its_budget_without_deposit() {
+    let (env, mut m) = setup();
+    let id = publish(&env, &mut m);
+    fund(&env, &mut m, 5, 3);
+    env.call(AGENT, yocto(0));
+    let o = m.order_with_budget(id, "linear_regression".into(), 60, U128(NearToken::from_near(2).as_yoctonear()));
+    let b = m.get_agent_budget(acc(AGENT)).unwrap();
+    assert_eq!(b.balance, U128(NearToken::from_near(3).as_yoctonear()));
+    assert_eq!(b.spent, U128(NearToken::from_near(2).as_yoctonear()));
+    assert_eq!(m.get_order(o).unwrap().buyer, acc(AGENT));
+    assert!(get_created_receipts().is_empty(), "paying from a budget moves no money out of the contract");
+}
+
+#[test]
+#[should_panic(expected = "Price above the budget's per-order limit")]
+fn agent_cannot_exceed_per_order_limit() {
+    let (env, mut m) = setup();
+    let id = publish(&env, &mut m);
+    fund(&env, &mut m, 5, 1);
+    env.call(AGENT, yocto(0));
+    m.order_with_budget(id, "linear_regression".into(), 60, U128(NearToken::from_near(9).as_yoctonear()));
+}
+
+#[test]
+#[should_panic(expected = "Price above the agent's offer")]
+fn agent_walks_away_above_its_offer() {
+    let (env, mut m) = setup();
+    let id = publish(&env, &mut m);
+    fund(&env, &mut m, 5, 3);
+    env.call(AGENT, yocto(0));
+    m.order_with_budget(id, "linear_regression".into(), 60, U128(NearToken::from_near(1).as_yoctonear()));
+}
+
+#[test]
+#[should_panic(expected = "Budget too low")]
+fn agent_cannot_overspend() {
+    let (env, mut m) = setup();
+    let id = publish(&env, &mut m);
+    fund(&env, &mut m, 3, 3);
+    env.call(AGENT, yocto(0));
+    m.order_with_budget(id.clone(), "linear_regression".into(), 60, U128(NearToken::from_near(2).as_yoctonear()));
+    m.order_with_budget(id, "linear_regression".into(), 60, U128(NearToken::from_near(2).as_yoctonear()));
+}
+
+#[test]
+#[should_panic(expected = "No budget for this agent")]
+fn unfunded_agent_cannot_order() {
+    let (env, mut m) = setup();
+    let id = publish(&env, &mut m);
+    env.call(AGENT, yocto(0));
+    m.order_with_budget(id, "linear_regression".into(), 60, U128(u128::MAX));
+}
+
+#[test]
+fn undelivered_agent_order_goes_back_to_the_budget() {
+    let (mut env, mut m) = setup();
+    let id = publish(&env, &mut m);
+    fund(&env, &mut m, 5, 3);
+    env.call(AGENT, yocto(0));
+    let o = m.order_with_budget(id, "linear_regression".into(), 60, U128(NearToken::from_near(2).as_yoctonear()));
+    env.now_ms += 61 * 60_000;
+    env.call(AGENT, yocto(0));
+    let _ = m.refund(o);
+    assert_eq!(m.get_agent_budget(acc(AGENT)).unwrap().balance, U128(NearToken::from_near(5).as_yoctonear()));
+    assert!(get_created_receipts().is_empty());
+}
+
+#[test]
+fn funder_takes_back_the_rest() {
+    let (env, mut m) = setup();
+    fund(&env, &mut m, 5, 3);
+    env.call(CAROL, yocto(0));
+    let _ = m.close_agent_budget(acc(AGENT));
+    assert_eq!(transfers_to(&get_created_receipts(), CAROL), NearToken::from_near(5).as_yoctonear());
+    assert!(m.get_agent_budget(acc(AGENT)).is_none());
+}
+
+#[test]
+#[should_panic(expected = "Only the funder can close this budget")]
+fn agent_cannot_close_its_own_budget() {
+    let (env, mut m) = setup();
+    fund(&env, &mut m, 5, 3);
+    env.call(AGENT, yocto(0));
+    let _ = m.close_agent_budget(acc(AGENT));
+}
+
+#[test]
+#[should_panic(expected = "This agent is funded by another account")]
+fn second_funder_is_refused() {
+    let (env, mut m) = setup();
+    fund(&env, &mut m, 5, 3);
+    env.call(BOB, NearToken::from_near(1));
+    m.fund_agent(acc(AGENT), U128(1));
+}

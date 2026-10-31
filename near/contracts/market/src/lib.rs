@@ -132,6 +132,15 @@ pub struct Order {
     pub status: OrderStatus,
 }
 
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug)]
+pub struct AgentBudget {
+    pub funder: AccountId,
+    pub balance: U128,
+    pub max_per_order: U128,
+    pub spent: U128,
+}
+
 #[near(serializers = [json])]
 pub struct Config {
     pub owner_id: AccountId,
@@ -426,14 +435,82 @@ impl Market {
         self.push_history(&token_id, Event::Earned { order_id, amount: U128(net) });
     }
 
-    /// Refund of a run that was not delivered before its deadline. Buyer only.
-    pub fn refund(&mut self, order_id: U64) -> Promise {
+    /// Refund of a run that was not delivered before its deadline. Buyer only. A run paid from an agent budget
+    /// goes back to that budget.
+    pub fn refund(&mut self, order_id: U64) -> PromiseOrValue<()> {
         let order = self.orders.get_mut(&order_id.0).unwrap_or_else(|| env::panic_str("Unknown order"));
         require!(env::predecessor_account_id() == order.buyer, "Only the buyer can ask for a refund");
         require!(order.status == OrderStatus::Paid, "Only a paid, undelivered order can be refunded");
         require!(env::block_timestamp_ms() > order.deadline_ms.0, "Deadline not reached");
         order.status = OrderStatus::Refunded;
-        Promise::new(order.buyer.clone()).transfer(NearToken::from_yoctonear(order.amount.0))
+        let (buyer, amount) = (order.buyer.clone(), order.amount.0);
+        if Self::order_paid_from_budget(order_id.0) {
+            let mut b = Self::budget_of(&buyer).unwrap_or_else(|| env::panic_str("Budget missing"));
+            b.balance = U128(b.balance.0 + amount);
+            Self::save_budget(&buyer, &b);
+            return PromiseOrValue::Value(());
+        }
+        PromiseOrValue::Promise(Promise::new(buyer).transfer(NearToken::from_yoctonear(amount)))
+    }
+
+    // ---------- agent budgets ----------
+
+    /// A human funds a spending budget for an agent account. The agent can only spend it on training runs here,
+    /// at most `max_per_order` each, through `order_with_budget` (callable with a function-call key, which cannot
+    /// attach deposits). The funder can take back what is left at any time.
+    #[payable]
+    pub fn fund_agent(&mut self, agent_id: AccountId, max_per_order: U128) -> AgentBudget {
+        let funder = env::predecessor_account_id();
+        let deposit = env::attached_deposit().as_yoctonear();
+        require!(deposit > 0, "Attach the budget");
+        let mut b = Self::budget_of(&agent_id).unwrap_or(AgentBudget { funder: funder.clone(), balance: U128(0), max_per_order, spent: U128(0) });
+        require!(b.funder == funder, "This agent is funded by another account");
+        b.balance = U128(b.balance.0 + deposit);
+        b.max_per_order = max_per_order;
+        Self::save_budget(&agent_id, &b);
+        b
+    }
+
+    /// Funder only: sends back what is left of the agent's budget and closes it.
+    pub fn close_agent_budget(&mut self, agent_id: AccountId) -> Promise {
+        let b = Self::budget_of(&agent_id).unwrap_or_else(|| env::panic_str("No budget for this agent"));
+        require!(env::predecessor_account_id() == b.funder, "Only the funder can close this budget");
+        env::storage_remove(&Self::budget_key(&agent_id));
+        Promise::new(b.funder).transfer(NearToken::from_yoctonear(b.balance.0))
+    }
+
+    /// The agent pays a training run from its budget. Never takes more than the dataset's price, never more than
+    /// `max_per_order`, never more than what is left.
+    pub fn order_with_budget(&mut self, token_id: TokenId, profile: String, deadline_minutes: u32, max_price: U128) -> U64 {
+        let agent = env::predecessor_account_id();
+        let mut b = Self::budget_of(&agent).unwrap_or_else(|| env::panic_str("No budget for this agent"));
+        let d = self.dataset(&token_id);
+        require!(profile == d.profile, "This dataset only accepts its own training profile");
+        require!((1..=10_080).contains(&deadline_minutes), "Deadline must be 1 minute to 7 days");
+        let price = d.price.0;
+        require!(price > 0, "This dataset is not for sale");
+        require!(price <= max_price.0, "Price above the agent's offer");
+        require!(price <= b.max_per_order.0, "Price above the budget's per-order limit");
+        require!(price <= b.balance.0, "Budget too low");
+        b.balance = U128(b.balance.0 - price);
+        b.spent = U128(b.spent.0 + price);
+        Self::save_budget(&agent, &b);
+        let id = self.next_order;
+        self.next_order += 1;
+        self.orders.insert(id, Order {
+            token_id,
+            buyer: agent,
+            amount: U128(price),
+            profile,
+            deadline_ms: U64(env::block_timestamp_ms() + deadline_minutes as u64 * 60_000),
+            status: OrderStatus::Paid,
+        });
+        env::storage_write(&Self::budget_order_key(id), &[1]);
+        U64(id)
+    }
+
+    pub fn get_agent_budget(&self, agent_id: AccountId) -> Option<AgentBudget> {
+        Self::budget_of(&agent_id)
     }
 
     // ---------- views ----------
@@ -594,6 +671,27 @@ impl NonFungibleTokenMetadataProvider for Market {
 // ---------- internals ----------
 
 impl Market {
+    // Budgets live under their own keys, outside the contract struct, so they were added without migrating state.
+    fn budget_key(agent: &AccountId) -> Vec<u8> {
+        [b"budget:".as_slice(), agent.as_bytes()].concat()
+    }
+
+    fn budget_order_key(order_id: u64) -> Vec<u8> {
+        [b"budget-order:".as_slice(), &order_id.to_le_bytes()].concat()
+    }
+
+    fn budget_of(agent: &AccountId) -> Option<AgentBudget> {
+        env::storage_read(&Self::budget_key(agent)).map(|v| near_sdk::borsh::from_slice(&v).unwrap())
+    }
+
+    fn save_budget(agent: &AccountId, b: &AgentBudget) {
+        env::storage_write(&Self::budget_key(agent), &near_sdk::borsh::to_vec(b).unwrap());
+    }
+
+    fn order_paid_from_budget(order_id: u64) -> bool {
+        env::storage_has_key(&Self::budget_order_key(order_id))
+    }
+
     fn publish_deposit() -> NearToken {
         VAULT_FUNDING.saturating_add(PUBLISH_STORAGE_BOUND)
     }
