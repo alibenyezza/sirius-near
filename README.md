@@ -78,6 +78,10 @@ way after the other (scripted, no LLM, so the run is the same every time). Full 
 
 The budget is untouched (1 NEAR left) and nothing reached Mallory.
 
+The dataset page shows the same verdict to anyone (`/dataset/5`):
+
+![Counterparty check on the poisoned NFT](near/docs/guard-panel.png)
+
 ### What the agent's key can and cannot do
 
 The agent account `agent.sirius-ali-carol.testnet` holds **one function-call access key and no full-access key**:

@@ -4,7 +4,8 @@
 //   node --env-file-if-exists=.env web.mjs      then open http://localhost:4320
 //
 //   /                 the dataset NFTs
-//   /dataset/<id>     one NFT: its vault and live balance, earnings, every holder, the full history
+//   /dataset/<id>     one NFT: its vault and live balance, earnings, every holder, the full history, and the
+//                     verdict an agent's counterparty check gives before paying it
 //   /holder/<id>      holder-only page: sign a fresh NEP-413 challenge with a NEAR wallet, checked against the
 //                     current owner on-chain, then withdraw the vault from the wallet
 //   /verified         "Verified" panel: attests the NEAR AI Cloud model with a fresh nonce, every check listed
@@ -14,6 +15,7 @@ import { readFileSync } from 'node:fs';
 import { checkHolder, issueChallenge } from './lib/gate.mjs';
 import { allOrders, getDataset, listDatasets, MARKET, view, yoctoToNear } from './lib/near.mjs';
 import { attestModel, DEFAULT_MODEL } from './lib/nearai.mjs';
+import { decide, gatherSignals, loadBlocklist, loadPolicy } from './lib/guard.mjs';
 
 const PORT = Number(process.env.PORT || 4320);
 const LOGO = readFileSync(new URL('../../public/images/sirius-mark.png', import.meta.url));
@@ -38,7 +40,7 @@ main{max-width:1040px;margin:0 auto;padding:36px 28px 80px}h1{font-size:30px;mar
 table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:18px;overflow:hidden}
 td,th{padding:10px 14px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}th{color:var(--muted);font-weight:500;font-size:13px}tr:last-child td{border-bottom:0}
 .pass{color:var(--ok)}.fail{color:var(--ko)}.pill{display:inline-block;padding:2px 10px;border-radius:999px;border:1px solid var(--border);font-size:12px;color:var(--muted)}
-.verified{border-color:#1f5c46}.notverified{border-color:#5c1f1f}button{background:var(--accent);color:#0b0b0b;border:0;border-radius:999px;padding:10px 20px;font-weight:600;cursor:pointer}
+.verified{border-color:#1f5c46}.notverified{border-color:#5c1f1f}.warned{border-color:#5c4a1f}.warn{color:#fbbf24}button{background:var(--accent);color:#0b0b0b;border:0;border-radius:999px;padding:10px 20px;font-weight:600;cursor:pointer}
 button:disabled{opacity:.4;cursor:default}.note{color:var(--dim);font-size:13px;margin-top:10px}`;
 
 function page(title, body) {
@@ -83,6 +85,11 @@ async function dataset(id) {
     view('available', {}, d.vault).catch(() => '0'), allOrders(),
   ]);
   const raw = await view('get_dataset', { token_id: id });
+  const check = await gatherSignals(id).then((sig) => decide(sig, loadPolicy(), loadBlocklist())).catch(() => null);
+  const tone = { allow: ['verified', 'pass', 'Allow'], warn: ['warned', 'warn', 'Warn: a human approves'], block: ['notverified', 'fail', 'Block'] };
+  const guardCard = check ? `<h2>Before an agent pays</h2><div class="card ${tone[check.verdict][0]}"><div class="big ${tone[check.verdict][1]}">${tone[check.verdict][2]}</div>
+<div class="k">counterparty check of an agent with the policy in <span class="mono">policy.json</span> (max ${esc(loadPolicy().maxPricePerOrderNear)} NEAR per order)</div>
+${check.reasons.length ? `<table style="margin-top:12px">${check.reasons.map((r) => `<tr><td class="${r.level === 'block' ? 'fail' : 'warn'}">${esc(r.level)}</td><td>${esc(r.check)}</td><td>${esc(r.detail)}</td></tr>`).join('')}</table>` : '<div class="note">vault keyless and on the market vault code, nobody reported, price within the policy, audit recorded</div>'}</div>` : '';
   const mine = orders.filter((o) => o.token_id === id);
   const audit = d.privacyAudit
     ? `<div class="card verified"><div class="k">privacy audit on NEAR AI Cloud</div><div class="mono">${esc(d.privacyAudit.report_hash)}</div><div class="note">model ${esc(d.privacyAudit.model)} · nonce ${esc(d.privacyAudit.nonce.slice(0, 16))}…</div></div>`
@@ -93,6 +100,7 @@ async function dataset(id) {
 <div class="card"><div class="k">vault (no access key)</div>${account(d.vault)}<div class="big" style="margin-top:6px">${near(available)}</div><div class="k">withdrawable now</div></div>
 <div class="card"><div class="k">earned / withdrawn</div><div class="big">${esc(d.earnedNear)} <span class="unit">/ ${esc(yoctoToNear(raw.withdrawn))} NEAR</span></div><div class="k">price per run ${near(d.priceYocto)} · ${esc(d.profile)}</div></div>
 ${audit}</div>
+${guardCard}
 <h2>Holders</h2><p>${holders.map(account).join(' → ')}</p>
 <h2>History</h2><table><tr><th>When</th><th>Event</th><th>Detail</th></tr>${history.map(eventRow).join('')}</table>
 <h2>Training runs</h2><table><tr><th>Order</th><th>Buyer</th><th>Price</th><th>Status</th><th>Model hash</th></tr>
