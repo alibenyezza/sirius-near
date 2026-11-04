@@ -18,7 +18,7 @@ const result = (r) => r.structuredContent.result;
 test('lists the NEAR tools with the base project names', async () => {
   const client = await connect();
   const names = (await client.listTools()).tools.map((t) => t.name).sort();
-  assert.deepEqual(names, ['buy_training_run', 'get_budget', 'get_dataset', 'get_receipt', 'search_datasets', 'verify_private_ai']);
+  assert.deepEqual(names, ['buy_training_run', 'check_counterparty', 'get_budget', 'get_dataset', 'get_receipt', 'report_account', 'search_datasets', 'verify_private_ai']);
   const buy = (await client.listTools()).tools.find((t) => t.name === 'buy_training_run');
   assert.equal(buy.annotations.readOnlyHint, false);
 });
@@ -43,4 +43,26 @@ test('buy_training_run rejects malformed prices before signing', async () => {
   const r = await client.callTool({ name: 'buy_training_run', arguments: { tokenId: '3', maxPriceNear: 'all of it' } });
   assert.equal(r.isError, true);
   assert.equal(signed, false);
+});
+
+test('buy_training_run never signs on a block or an unapproved warning', async () => {
+  for (const verdict of ['block', 'warn']) {
+    let signed = false;
+    const client = await connect({
+      agentLoader: () => { signed = true; throw new Error('should not sign'); },
+      guard: async () => ({ verdict, reasons: [{ level: verdict, check: 'stub', detail: 'stub' }] }),
+    });
+    const r = result(await client.callTool({ name: 'buy_training_run', arguments: { tokenId: '4', maxPriceNear: '0.5' } }));
+    assert.equal(r.paid, false);
+    assert.equal(r.verdict, verdict);
+    if (verdict === 'warn') assert.match(r.needsHuman, /approve\.mjs 4 0\.5/);
+    assert.equal(signed, false);
+  }
+});
+
+test('check_counterparty reads the live vault of NFT 4: keyless, on the market vault code', async () => {
+  const client = await connect();
+  const r = result(await client.callTool({ name: 'check_counterparty', arguments: { tokenId: '4', offerNear: '0.5' } }));
+  assert.notEqual(r.verdict, 'block', JSON.stringify(r.reasons));
+  assert.ok(!r.reasons.some((x) => x.check.startsWith('vault')));
 });

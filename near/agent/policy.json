@@ -1,0 +1,8 @@
+{
+  "note": "Written by the human who funds the agent. The agent reads it and cannot change it.",
+  "market": "sirius-ali-market.testnet",
+  "maxPricePerOrderNear": "0.6",
+  "allowedProfiles": ["linear_regression"],
+  "requirePrivacyAudit": "warn",
+  "recentTransferMinutes": 60
+}
