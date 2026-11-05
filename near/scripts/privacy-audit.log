@@ -1,0 +1,72 @@
+# privacy audit 2026-11-05 on NEAR AI Cloud, dataset near/examples/hospital-stays-fictional.csv, recorded on NFT 4
+# node --env-file=.env privacy-audit.mjs --token 4 --holder sirius-ali-bob.testnet
+# recorded by the holder: set_privacy_audit, tx 92NsvFG8qqHd9vah3m5T72ceLoLXe6E7Y6HG1P6b3Qp8 (sirius-ali-bob.testnet)
+
+Dataset near/examples/hospital-stays-fictional.csv
+  sha256 3720f3a7c0b6c44e42465f7541c9c038a04bcb401d2f12e75434f4d572a63bb0
+
+Attestation of Qwen/Qwen3.8-27B with a fresh nonce a7bc95653e410e97a1463a6c0c2961f4e4165beaf9b0ff34aae6bc788d4c34fc
+  PASS  [model] model served by 1 attested TEE node(s)  (Qwen/Qwen3.8-27B)
+  PASS  [model] nonce echoed  (a7bc95653e410e97a1463a6c0c2961f4e4165beaf9b0ff34aae6bc788d4c34fc)
+  PASS  [model] Intel TDX quote signed by Intel, TCB up to date  (TCB UpToDate)
+  PASS  [model] signing key and nonce bound in TDX report data  (0x835ab53d20294ef795906dff21ae4c045336aa26)
+  PASS  [model] compose manifest hashes to the attested compose hash  (5e513dbd72e1c0f291f748ad06d4dbc1df55659869e649376213ac7b3c9d2e29)
+  PASS  [model] compose hash measured in MRCONFIGID  (015e513dbd72e1c0f291f748ad06d4dbc1df55659869e649376213ac7b3c9d2e29)
+  PASS  [model] MRTD matches the reported TCB info  (df4d77c857de652bd0fafa34…)
+  PASS  [model] JWT token signed by NVIDIA  (NVIDIA-PLATFORM-ATTESTATION)
+  PASS  [model] JWT eat_nonce = our nonce  (a7bc95653e410e97a1463a6c0c2961f4e4165beaf9b0ff34aae6bc788d4c34fc)
+  PASS  [model] NVIDIA overall attestation result  (true)
+  PASS  [model] GPU-0 token signed by NVIDIA  (GH100)
+  PASS  [model] GPU-0 eat_nonce = our nonce  (a7bc95653e410e97a1463a6c0c2961f4e4165beaf9b0ff34aae6bc788d4c34fc)
+  PASS  [model] GPU-0 secure boot on, debug off, measurements ok  (GH100 secboot=true dbgstat=disabled measres=success)
+  PASS  [model] GPU-1 token signed by NVIDIA  (GH100)
+  PASS  [model] GPU-1 eat_nonce = our nonce  (a7bc95653e410e97a1463a6c0c2961f4e4165beaf9b0ff34aae6bc788d4c34fc)
+  PASS  [model] GPU-1 secure boot on, debug off, measurements ok  (GH100 secboot=true dbgstat=disabled measres=success)
+  PASS  [model] GPU-2 token signed by NVIDIA  (GH100)
+  PASS  [model] GPU-2 eat_nonce = our nonce  (a7bc95653e410e97a1463a6c0c2961f4e4165beaf9b0ff34aae6bc788d4c34fc)
+  PASS  [model] GPU-2 secure boot on, debug off, measurements ok  (GH100 secboot=true dbgstat=disabled measres=success)
+  PASS  [model] GPU-3 token signed by NVIDIA  (GH100)
+  PASS  [model] GPU-3 eat_nonce = our nonce  (a7bc95653e410e97a1463a6c0c2961f4e4165beaf9b0ff34aae6bc788d4c34fc)
+  PASS  [model] GPU-3 secure boot on, debug off, measurements ok  (GH100 secboot=true dbgstat=disabled measres=success)
+  PASS  [model] GPU-4 token signed by NVIDIA  (GH100)
+  PASS  [model] GPU-4 eat_nonce = our nonce  (a7bc95653e410e97a1463a6c0c2961f4e4165beaf9b0ff34aae6bc788d4c34fc)
+  PASS  [model] GPU-4 secure boot on, debug off, measurements ok  (GH100 secboot=true dbgstat=disabled measres=success)
+  PASS  [model] GPU-5 token signed by NVIDIA  (GH100)
+  PASS  [model] GPU-5 eat_nonce = our nonce  (a7bc95653e410e97a1463a6c0c2961f4e4165beaf9b0ff34aae6bc788d4c34fc)
+  PASS  [model] GPU-5 secure boot on, debug off, measurements ok  (GH100 secboot=true dbgstat=disabled measres=success)
+  PASS  [model] GPU-6 token signed by NVIDIA  (GH100)
+  PASS  [model] GPU-6 eat_nonce = our nonce  (a7bc95653e410e97a1463a6c0c2961f4e4165beaf9b0ff34aae6bc788d4c34fc)
+  PASS  [model] GPU-6 secure boot on, debug off, measurements ok  (GH100 secboot=true dbgstat=disabled measres=success)
+  PASS  [model] GPU-7 token signed by NVIDIA  (GH100)
+  PASS  [model] GPU-7 eat_nonce = our nonce  (a7bc95653e410e97a1463a6c0c2961f4e4165beaf9b0ff34aae6bc788d4c34fc)
+  PASS  [model] GPU-7 secure boot on, debug off, measurements ok  (GH100 secboot=true dbgstat=disabled measres=success)
+  PASS  [gateway] nonce echoed  (a7bc95653e410e97a1463a6c0c2961f4e4165beaf9b0ff34aae6bc788d4c34fc)
+  PASS  [gateway] Intel TDX quote signed by Intel, TCB up to date  (TCB UpToDate)
+  PASS  [gateway] signing key and nonce bound in TDX report data  (0xb98a789cdc4817275f5155593ba73ef2a957e779)
+  PASS  [gateway] compose manifest hashes to the attested compose hash  (dc14d62b75ffde97f64fdba40c6be681b6818eb12312e1adee60b3cd4de2533b)
+  PASS  [gateway] compose hash measured in MRCONFIGID  (01dc14d62b75ffde97f64fdba40c6be681b6818eb12312e1adee60b3cd4de2533b)
+  PASS  [gateway] MRTD matches the reported TCB info  (7fe60787222bd394cb516abc…)
+
+Signed reply
+  PASS  [provider_tee] signed text has the shape of its signature kind  (provider_tee)
+  PASS  [provider_tee] signed request hash = sha256(request we sent)  (d6e5f4b1da10a04bae98818bae535cd6fc983bfc755f276156dfd37cd80a1191)
+  PASS  [provider_tee] signed response hash = sha256(response we got)  (eea5be5cf71d10e72de7b38b4561a2c2a17cdc7a90a1ffe0e6c00c51e7860231)
+  PASS  [provider_tee] signed model id = requested model  (Qwen/Qwen3.8-27B)
+  PASS  [provider_tee] signer = attested TEE signing address  (0x835AB53d20294Ef795906DFf21aE4C045336aa26)
+
+Verdict: publishable_after_removing_pii
+  personal data: patient_name (name) Full patient names directly identify individuals.
+  personal data: email (email) Email addresses directly identify individuals and are contact PII.
+  personal data: phone (phone) Telephone numbers directly identify individuals.
+  personal data: postcode (postcode) Postcode can identify location and may assist re-identification, especially when combined with other fields.
+  safe columns: age, bmi, smoker, prior_visits, length_of_stay_days
+
+Public card: De-identified Patient Health Indicators
+  Health indicator records with direct identifiers removed, including age, body mass index, smoking status, prior visit count, and length of stay.
+
+VERIFIED: the audit ran in an attested TEE and the reply is signed by its key
+Audit hash b05dddda4fb2b582c1560060985e7665a2eabccd28fe0fbd385803c949cbf14f
+
+# on chain after the call: get_dataset("4").privacy_audit =
+# {"report_hash":"b05dddda4fb2b582c1560060985e7665a2eabccd28fe0fbd385803c949cbf14f","model":"Qwen/Qwen3.8-27B","nonce":"a7bc95653e410e97a1463a6c0c2961f4e4165beaf9b0ff34aae6bc788d4c34fc"}
+# check_counterparty on NFT 4 after the audit: {"verdict":"allow","reasons":[]}

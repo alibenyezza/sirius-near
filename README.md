@@ -57,6 +57,8 @@ The full journey on token `4` (`near/scripts/demo-testnet.sh`), every step a rea
 | Alice calls the vault directly | alice | refused: `Only the parent market can pay out` | (failed) |
 | Bob withdraws | bob | 0.45 NEAR | `2oTRctx1iDcsxX4xbdEkHo98WLDQqKwK9xZ8MBqGn923` |
 | The holder page with real NEP-413 signatures (`near/scripts/holder-gate-check.sh`) | bob, then alice | Bob in; replay refused; Alice `does not hold NFT 4` | (off-chain) |
+| Privacy audit on NEAR AI Cloud (`Qwen/Qwen3.8-27B`): 40 attestation checks and 5 signed-reply checks pass; `patient_name`, `email`, `phone`, `postcode` flagged ([log](near/scripts/privacy-audit.log)) | (off-chain, TEE) | `VERIFIED`, audit hash `b05dddda…cbf14f` | |
+| Bob records the audit hash, model and nonce in the NFT (`set_privacy_audit`) | bob | the check on NFT 4 goes from `warn` to `allow` | `92NsvFG8qqHd9vah3m5T72ceLoLXe6E7Y6HG1P6b3Qp8` |
 
 ### Attack demo: a prompt-injected agent
 
@@ -118,7 +120,7 @@ Requirements: Node 22, and for the contracts Rust with [`cargo-near`](https://gi
    `get_receipt`. Read-only tools work as is; `buy_training_run` needs an agent account with a budget (see
    `near/agent/.env.example`). Its limits are in `near/agent/policy.json`, written by the human.
 6. **Check a counterparty.** Call `check_counterparty` with `tokenId: "5"`: `block`, with the reasons. With
-   `tokenId: "4"`: `warn` until a privacy audit is recorded on it. With an agent account,
+   `tokenId: "4"`: `allow`, since its privacy audit is recorded. With an agent account,
    `node --env-file=.env attack-demo.mjs 5 sirius-ali-mallory.testnet` replays the attack demo.
 7. **Run the privacy audit itself.** Put a NEAR AI Cloud key in `near/agent/.env` (`NEARAI_CLOUD_API_KEY=`, from
    <https://cloud.near.ai>), then `node --env-file=.env privacy-audit.mjs ../examples/hospital-stays-fictional.csv --token 4 --holder <holder>`.
@@ -132,7 +134,7 @@ Requirements: Node 22, and for the contracts Rust with [`cargo-near`](https://gi
 | Real | Simulated or not done yet |
 |---|---|
 | Every contract call above, on testnet | **The TEE of the training runner.** The runner bridge trains here, with the same least-squares method as the base project, and its certificate says `"mode": "local-simulated", "tee": null`. The TDX runner of the base project (Phala) is not wired to NEAR yet. |
-| The NEAR AI Cloud attestation checks (Intel, NVIDIA, bindings), run on every call | **The audit completion.** It needs a NEAR AI Cloud API key, which was not set when this README was written: no audit hash is recorded on token `4` yet, and none is invented. The code path is tested up to the API call. |
+| The NEAR AI Cloud attestation checks (Intel, NVIDIA, bindings), run on every call, and the privacy audit of token `4`: run on a private TEE model, reply signed by the attested key, hash recorded on testnet ([log](near/scripts/privacy-audit.log)) | **The audited file is the full fictional CSV**, not a sample cut from a real dataset. The audit hash is checked by its holder's call, not by the contract: `set_privacy_audit` stores what the holder sends. |
 | The model trained by the bridge and its hash | **The runner's TDX quote on-chain.** `register_runner` stores the hash of a quote checked off-chain; the contract does not verify quotes. |
 | The NEP-413 holder gate, with near-cli signatures | The dataset is fictional (`near/examples/hospital-stays-fictional.csv`): every name, e-mail and phone is invented. |
 

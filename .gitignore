@@ -25,6 +25,7 @@ next-env.d.ts
 # Logs
 *.log
 !near/scripts/attack-demo.log
+!near/scripts/privacy-audit.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
