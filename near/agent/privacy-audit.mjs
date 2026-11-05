@@ -52,7 +52,18 @@ console.log(`\nVerdict: ${r.audit.verdict}`);
 for (const p of r.audit.pii_columns) console.log(`  personal data: ${p.column} (${p.kind}) ${p.why}`);
 console.log(`  safe columns: ${(r.audit.safe_columns ?? []).join(', ')}`);
 console.log(`\nPublic card: ${r.audit.public_card?.title}\n  ${r.audit.public_card?.summary}`);
-console.log(r.verified ? '\nVERIFIED: the audit ran in an attested TEE and the reply is signed by its key' : '\nNOT VERIFIED');
+console.log(`\nSecond detector: ${r.filterAttestation.model} (privacy classify), its own attestation, nonce ${r.filterAttestation.nonce}`);
+panel(r.filterAttestation.checks);
+if (r.filter) {
+  console.log('\nSigned classify reply');
+  panel(r.filter.checks);
+  for (const f of r.filter.flags) console.log(`  personal data: ${f.column} (${f.categories.join(', ')}) ${f.spans} span(s), score up to ${f.maxScore.toFixed(3)}`);
+  const c = r.filter.comparison;
+  console.log(`  both detectors: ${c.both.join(', ') || '-'}`);
+  console.log(`  only the model: ${c.onlyModel.join(', ') || '-'}`);
+  console.log(`  only the filter: ${c.onlyFilter.join(', ') || '-'}`);
+}
+console.log(r.verified ? '\nVERIFIED: both detectors ran in attested TEEs and both replies are signed by attested keys' : `\nNOT VERIFIED${r.reason ? `: ${r.reason}` : ''}`);
 console.log(`Audit hash ${r.hash}`);
 const token = opt('--token');
 if (token && r.verified) {

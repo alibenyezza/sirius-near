@@ -1,46 +1,47 @@
-# privacy audit 2026-11-05 on NEAR AI Cloud, dataset near/examples/hospital-stays-fictional.csv, recorded on NFT 4
+# privacy audit 2026-11-06 on NEAR AI Cloud, two detectors, dataset near/examples/hospital-stays-fictional.csv, recorded on NFT 4
 # node --env-file=.env privacy-audit.mjs --token 4 --holder sirius-ali-bob.testnet
-# recorded by the holder: set_privacy_audit, tx 92NsvFG8qqHd9vah3m5T72ceLoLXe6E7Y6HG1P6b3Qp8 (sirius-ali-bob.testnet)
+# recorded by the holder: set_privacy_audit, tx H6s56FBkSDMdmcjgEMv4sDiyrEvnQ8WyUvrTovCAUZdz (sirius-ali-bob.testnet)
+# previous audit (one detector, 5 Nov): tx 92NsvFG8qqHd9vah3m5T72ceLoLXe6E7Y6HG1P6b3Qp8
 
 Dataset near/examples/hospital-stays-fictional.csv
   sha256 3720f3a7c0b6c44e42465f7541c9c038a04bcb401d2f12e75434f4d572a63bb0
 
-Attestation of Qwen/Qwen3.8-27B with a fresh nonce a7bc95653e410e97a1463a6c0c2961f4e4165beaf9b0ff34aae6bc788d4c34fc
+Attestation of Qwen/Qwen3.8-27B with a fresh nonce d084222d597969382f318afcb57d226d20cceb5176d658231b45ea45b538cc6b
   PASS  [model] model served by 1 attested TEE node(s)  (Qwen/Qwen3.8-27B)
-  PASS  [model] nonce echoed  (a7bc95653e410e97a1463a6c0c2961f4e4165beaf9b0ff34aae6bc788d4c34fc)
+  PASS  [model] nonce echoed  (d084222d597969382f318afcb57d226d20cceb5176d658231b45ea45b538cc6b)
   PASS  [model] Intel TDX quote signed by Intel, TCB up to date  (TCB UpToDate)
   PASS  [model] signing key and nonce bound in TDX report data  (0x835ab53d20294ef795906dff21ae4c045336aa26)
   PASS  [model] compose manifest hashes to the attested compose hash  (5e513dbd72e1c0f291f748ad06d4dbc1df55659869e649376213ac7b3c9d2e29)
   PASS  [model] compose hash measured in MRCONFIGID  (015e513dbd72e1c0f291f748ad06d4dbc1df55659869e649376213ac7b3c9d2e29)
   PASS  [model] MRTD matches the reported TCB info  (df4d77c857de652bd0fafa34…)
   PASS  [model] JWT token signed by NVIDIA  (NVIDIA-PLATFORM-ATTESTATION)
-  PASS  [model] JWT eat_nonce = our nonce  (a7bc95653e410e97a1463a6c0c2961f4e4165beaf9b0ff34aae6bc788d4c34fc)
+  PASS  [model] JWT eat_nonce = our nonce  (d084222d597969382f318afcb57d226d20cceb5176d658231b45ea45b538cc6b)
   PASS  [model] NVIDIA overall attestation result  (true)
   PASS  [model] GPU-0 token signed by NVIDIA  (GH100)
-  PASS  [model] GPU-0 eat_nonce = our nonce  (a7bc95653e410e97a1463a6c0c2961f4e4165beaf9b0ff34aae6bc788d4c34fc)
+  PASS  [model] GPU-0 eat_nonce = our nonce  (d084222d597969382f318afcb57d226d20cceb5176d658231b45ea45b538cc6b)
   PASS  [model] GPU-0 secure boot on, debug off, measurements ok  (GH100 secboot=true dbgstat=disabled measres=success)
   PASS  [model] GPU-1 token signed by NVIDIA  (GH100)
-  PASS  [model] GPU-1 eat_nonce = our nonce  (a7bc95653e410e97a1463a6c0c2961f4e4165beaf9b0ff34aae6bc788d4c34fc)
+  PASS  [model] GPU-1 eat_nonce = our nonce  (d084222d597969382f318afcb57d226d20cceb5176d658231b45ea45b538cc6b)
   PASS  [model] GPU-1 secure boot on, debug off, measurements ok  (GH100 secboot=true dbgstat=disabled measres=success)
   PASS  [model] GPU-2 token signed by NVIDIA  (GH100)
-  PASS  [model] GPU-2 eat_nonce = our nonce  (a7bc95653e410e97a1463a6c0c2961f4e4165beaf9b0ff34aae6bc788d4c34fc)
+  PASS  [model] GPU-2 eat_nonce = our nonce  (d084222d597969382f318afcb57d226d20cceb5176d658231b45ea45b538cc6b)
   PASS  [model] GPU-2 secure boot on, debug off, measurements ok  (GH100 secboot=true dbgstat=disabled measres=success)
   PASS  [model] GPU-3 token signed by NVIDIA  (GH100)
-  PASS  [model] GPU-3 eat_nonce = our nonce  (a7bc95653e410e97a1463a6c0c2961f4e4165beaf9b0ff34aae6bc788d4c34fc)
+  PASS  [model] GPU-3 eat_nonce = our nonce  (d084222d597969382f318afcb57d226d20cceb5176d658231b45ea45b538cc6b)
   PASS  [model] GPU-3 secure boot on, debug off, measurements ok  (GH100 secboot=true dbgstat=disabled measres=success)
   PASS  [model] GPU-4 token signed by NVIDIA  (GH100)
-  PASS  [model] GPU-4 eat_nonce = our nonce  (a7bc95653e410e97a1463a6c0c2961f4e4165beaf9b0ff34aae6bc788d4c34fc)
+  PASS  [model] GPU-4 eat_nonce = our nonce  (d084222d597969382f318afcb57d226d20cceb5176d658231b45ea45b538cc6b)
   PASS  [model] GPU-4 secure boot on, debug off, measurements ok  (GH100 secboot=true dbgstat=disabled measres=success)
   PASS  [model] GPU-5 token signed by NVIDIA  (GH100)
-  PASS  [model] GPU-5 eat_nonce = our nonce  (a7bc95653e410e97a1463a6c0c2961f4e4165beaf9b0ff34aae6bc788d4c34fc)
+  PASS  [model] GPU-5 eat_nonce = our nonce  (d084222d597969382f318afcb57d226d20cceb5176d658231b45ea45b538cc6b)
   PASS  [model] GPU-5 secure boot on, debug off, measurements ok  (GH100 secboot=true dbgstat=disabled measres=success)
   PASS  [model] GPU-6 token signed by NVIDIA  (GH100)
-  PASS  [model] GPU-6 eat_nonce = our nonce  (a7bc95653e410e97a1463a6c0c2961f4e4165beaf9b0ff34aae6bc788d4c34fc)
+  PASS  [model] GPU-6 eat_nonce = our nonce  (d084222d597969382f318afcb57d226d20cceb5176d658231b45ea45b538cc6b)
   PASS  [model] GPU-6 secure boot on, debug off, measurements ok  (GH100 secboot=true dbgstat=disabled measres=success)
   PASS  [model] GPU-7 token signed by NVIDIA  (GH100)
-  PASS  [model] GPU-7 eat_nonce = our nonce  (a7bc95653e410e97a1463a6c0c2961f4e4165beaf9b0ff34aae6bc788d4c34fc)
+  PASS  [model] GPU-7 eat_nonce = our nonce  (d084222d597969382f318afcb57d226d20cceb5176d658231b45ea45b538cc6b)
   PASS  [model] GPU-7 secure boot on, debug off, measurements ok  (GH100 secboot=true dbgstat=disabled measres=success)
-  PASS  [gateway] nonce echoed  (a7bc95653e410e97a1463a6c0c2961f4e4165beaf9b0ff34aae6bc788d4c34fc)
+  PASS  [gateway] nonce echoed  (d084222d597969382f318afcb57d226d20cceb5176d658231b45ea45b538cc6b)
   PASS  [gateway] Intel TDX quote signed by Intel, TCB up to date  (TCB UpToDate)
   PASS  [gateway] signing key and nonce bound in TDX report data  (0xb98a789cdc4817275f5155593ba73ef2a957e779)
   PASS  [gateway] compose manifest hashes to the attested compose hash  (dc14d62b75ffde97f64fdba40c6be681b6818eb12312e1adee60b3cd4de2533b)
@@ -50,23 +51,77 @@ Attestation of Qwen/Qwen3.8-27B with a fresh nonce a7bc95653e410e97a1463a6c0c296
 Signed reply
   PASS  [provider_tee] signed text has the shape of its signature kind  (provider_tee)
   PASS  [provider_tee] signed request hash = sha256(request we sent)  (d6e5f4b1da10a04bae98818bae535cd6fc983bfc755f276156dfd37cd80a1191)
-  PASS  [provider_tee] signed response hash = sha256(response we got)  (eea5be5cf71d10e72de7b38b4561a2c2a17cdc7a90a1ffe0e6c00c51e7860231)
+  PASS  [provider_tee] signed response hash = sha256(response we got)  (81006a182c4b8cf3b78303cfb677214cb0a7cce6e0564c0aa34da51a2dd16352)
   PASS  [provider_tee] signed model id = requested model  (Qwen/Qwen3.8-27B)
   PASS  [provider_tee] signer = attested TEE signing address  (0x835AB53d20294Ef795906DFf21aE4C045336aa26)
 
 Verdict: publishable_after_removing_pii
-  personal data: patient_name (name) Full patient names directly identify individuals.
-  personal data: email (email) Email addresses directly identify individuals and are contact PII.
-  personal data: phone (phone) Telephone numbers directly identify individuals.
-  personal data: postcode (postcode) Postcode can identify location and may assist re-identification, especially when combined with other fields.
+  personal data: patient_name (name) Full names are direct personal identifiers.
+  personal data: email (email) Email addresses are direct contact identifiers.
+  personal data: phone (phone) Phone numbers are direct contact identifiers.
+  personal data: postcode (postcode) Postcodes can reveal location and support re-identification.
   safe columns: age, bmi, smoker, prior_visits, length_of_stay_days
 
-Public card: De-identified Patient Health Indicators
-  Health indicator records with direct identifiers removed, including age, body mass index, smoking status, prior visit count, and length of stay.
+Public card: De-identified Patient Health and Utilization Metrics
+  After removal of identifying columns, the dataset contains de-identified patient-level health and utilization attributes suitable for research or benchmarking, including age, body mass index, smoking status, prior visit count, and length of stay in days.
 
-VERIFIED: the audit ran in an attested TEE and the reply is signed by its key
-Audit hash b05dddda4fb2b582c1560060985e7665a2eabccd28fe0fbd385803c949cbf14f
+Second detector: openai/privacy-filter (privacy classify), its own attestation, nonce 834d5be4bf2192929644f9153ee75665ddbaccf00f451b4f297d1153a2fc04e8
+  PASS  [model] model served by 1 attested TEE node(s)  (openai/privacy-filter)
+  PASS  [model] nonce echoed  (834d5be4bf2192929644f9153ee75665ddbaccf00f451b4f297d1153a2fc04e8)
+  PASS  [model] Intel TDX quote signed by Intel, TCB up to date  (TCB UpToDate)
+  PASS  [model] signing key and nonce bound in TDX report data  (0x17ce5f31b1d911a7416245230a09bad34b04b7cf)
+  PASS  [model] compose manifest hashes to the attested compose hash  (5e513dbd72e1c0f291f748ad06d4dbc1df55659869e649376213ac7b3c9d2e29)
+  PASS  [model] compose hash measured in MRCONFIGID  (015e513dbd72e1c0f291f748ad06d4dbc1df55659869e649376213ac7b3c9d2e29)
+  PASS  [model] MRTD matches the reported TCB info  (df4d77c857de652bd0fafa34…)
+  PASS  [model] JWT token signed by NVIDIA  (NVIDIA-PLATFORM-ATTESTATION)
+  PASS  [model] JWT eat_nonce = our nonce  (834d5be4bf2192929644f9153ee75665ddbaccf00f451b4f297d1153a2fc04e8)
+  PASS  [model] NVIDIA overall attestation result  (true)
+  PASS  [model] GPU-0 token signed by NVIDIA  (GH100)
+  PASS  [model] GPU-0 eat_nonce = our nonce  (834d5be4bf2192929644f9153ee75665ddbaccf00f451b4f297d1153a2fc04e8)
+  PASS  [model] GPU-0 secure boot on, debug off, measurements ok  (GH100 secboot=true dbgstat=disabled measres=success)
+  PASS  [model] GPU-1 token signed by NVIDIA  (GH100)
+  PASS  [model] GPU-1 eat_nonce = our nonce  (834d5be4bf2192929644f9153ee75665ddbaccf00f451b4f297d1153a2fc04e8)
+  PASS  [model] GPU-1 secure boot on, debug off, measurements ok  (GH100 secboot=true dbgstat=disabled measres=success)
+  PASS  [model] GPU-2 token signed by NVIDIA  (GH100)
+  PASS  [model] GPU-2 eat_nonce = our nonce  (834d5be4bf2192929644f9153ee75665ddbaccf00f451b4f297d1153a2fc04e8)
+  PASS  [model] GPU-2 secure boot on, debug off, measurements ok  (GH100 secboot=true dbgstat=disabled measres=success)
+  PASS  [model] GPU-3 token signed by NVIDIA  (GH100)
+  PASS  [model] GPU-3 eat_nonce = our nonce  (834d5be4bf2192929644f9153ee75665ddbaccf00f451b4f297d1153a2fc04e8)
+  PASS  [model] GPU-3 secure boot on, debug off, measurements ok  (GH100 secboot=true dbgstat=disabled measres=success)
+  PASS  [model] GPU-4 token signed by NVIDIA  (GH100)
+  PASS  [model] GPU-4 eat_nonce = our nonce  (834d5be4bf2192929644f9153ee75665ddbaccf00f451b4f297d1153a2fc04e8)
+  PASS  [model] GPU-4 secure boot on, debug off, measurements ok  (GH100 secboot=true dbgstat=disabled measres=success)
+  PASS  [model] GPU-5 token signed by NVIDIA  (GH100)
+  PASS  [model] GPU-5 eat_nonce = our nonce  (834d5be4bf2192929644f9153ee75665ddbaccf00f451b4f297d1153a2fc04e8)
+  PASS  [model] GPU-5 secure boot on, debug off, measurements ok  (GH100 secboot=true dbgstat=disabled measres=success)
+  PASS  [model] GPU-6 token signed by NVIDIA  (GH100)
+  PASS  [model] GPU-6 eat_nonce = our nonce  (834d5be4bf2192929644f9153ee75665ddbaccf00f451b4f297d1153a2fc04e8)
+  PASS  [model] GPU-6 secure boot on, debug off, measurements ok  (GH100 secboot=true dbgstat=disabled measres=success)
+  PASS  [model] GPU-7 token signed by NVIDIA  (GH100)
+  PASS  [model] GPU-7 eat_nonce = our nonce  (834d5be4bf2192929644f9153ee75665ddbaccf00f451b4f297d1153a2fc04e8)
+  PASS  [model] GPU-7 secure boot on, debug off, measurements ok  (GH100 secboot=true dbgstat=disabled measres=success)
+  PASS  [gateway] nonce echoed  (834d5be4bf2192929644f9153ee75665ddbaccf00f451b4f297d1153a2fc04e8)
+  PASS  [gateway] Intel TDX quote signed by Intel, TCB up to date  (TCB UpToDate)
+  PASS  [gateway] signing key and nonce bound in TDX report data  (0xb98a789cdc4817275f5155593ba73ef2a957e779)
+  PASS  [gateway] compose manifest hashes to the attested compose hash  (dc14d62b75ffde97f64fdba40c6be681b6818eb12312e1adee60b3cd4de2533b)
+  PASS  [gateway] compose hash measured in MRCONFIGID  (01dc14d62b75ffde97f64fdba40c6be681b6818eb12312e1adee60b3cd4de2533b)
+  PASS  [gateway] MRTD matches the reported TCB info  (7fe60787222bd394cb516abc…)
 
-# on chain after the call: get_dataset("4").privacy_audit =
-# {"report_hash":"b05dddda4fb2b582c1560060985e7665a2eabccd28fe0fbd385803c949cbf14f","model":"Qwen/Qwen3.8-27B","nonce":"a7bc95653e410e97a1463a6c0c2961f4e4165beaf9b0ff34aae6bc788d4c34fc"}
-# check_counterparty on NFT 4 after the audit: {"verdict":"allow","reasons":[]}
+Signed classify reply
+  PASS  [gateway] signed text has the shape of its signature kind  (gateway)
+  PASS  [gateway] signed request hash = sha256(request we sent)  (8c04307e341e978e0bc41ddebdefa8c3b2ecda754d3e665cd11d22b68c752600)
+  PASS  [gateway] signed response hash = sha256(response we got)  (8658cc241a82e3876b0cb20e2b2ec3ffd570678edd2ac2491097facdc7c578fe)
+  PASS  [gateway] signer = attested TEE signing address  (0xb98A789Cdc4817275F5155593ba73EF2a957e779)
+  personal data: patient_name (private_person) 20 span(s), score up to 1.000
+  personal data: email (private_email) 20 span(s), score up to 1.000
+  personal data: phone (private_phone) 20 span(s), score up to 1.000
+  personal data: postcode (private_address) 20 span(s), score up to 1.000
+  both detectors: patient_name, email, phone, postcode
+  only the model: -
+  only the filter: -
+
+VERIFIED: both detectors ran in attested TEEs and both replies are signed by attested keys
+Audit hash 1d2843baf50724fd32be9a663f4a08d60fb8897937355379e0e49f9a0245a56b
+
+Record it in NFT 4 (holder signs):
+  near contract call-function as-transaction sirius-ali-market.testnet set_privacy_audit json-args '{"token_id":"4","report_hash":"1d2843baf50724fd32be9a663f4a08d60fb8897937355379e0e49f9a0245a56b","model":"Qwen/Qwen3.8-27B","nonce":"d084222d597969382f318afcb57d226d20cceb5176d658231b45ea45b538cc6b"}' prepaid-gas '30 Tgas' attached-deposit '1 yoctoNEAR' sign-as sirius-ali-bob.testnet network-config testnet sign-with-legacy-keychain send

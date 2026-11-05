@@ -153,31 +153,21 @@ export async function attestModel(model = DEFAULT_MODEL, apiKey = process.env.NE
 }
 
 /**
- * Sends one completion and verifies its signature against the attested keys.
- * `messages` is sent exactly as given; its bytes are what the TEE signs.
+ * Fetches the TEE signature of one exchange (`id`) and checks it against the bytes we sent and received and against
+ * the signing addresses of the attestation. Works for model signatures (model:request:response) and gateway
+ * signatures (request:response).
  */
-export async function chatAndVerify({ apiKey, model, messages, attestation, responseFormat }) {
-  if (!apiKey) throw new Error('NEARAI_CLOUD_API_KEY is not set');
-  const requestBody = JSON.stringify({ model, messages, stream: false, ...(responseFormat ? { response_format: responseFormat } : {}) });
-  const r = await ok(await fetch(`${NEARAI_BASE_URL}/v1/chat/completions`, {
-    method: 'POST',
-    headers: { ...headers(apiKey), 'content-type': 'application/json' },
-    body: requestBody,
-  }), 'chat completion');
-  const responseText = await r.text();
-  const completion = JSON.parse(responseText);
+export async function verifySignedExchange({ apiKey, model, id, requestBody, responseText, attestation }) {
   const requestHash = sha256(requestBody);
   const responseHash = sha256(responseText);
-
   let signature;
   for (let attempt = 1; attempt <= 5; attempt++) {
     const params = new URLSearchParams({ model, signing_algo: 'ecdsa' });
-    const s = await fetch(`${NEARAI_BASE_URL}/v1/signature/${encodeURIComponent(completion.id)}?${params}`, { headers: headers(apiKey) });
+    const s = await fetch(`${NEARAI_BASE_URL}/v1/signature/${encodeURIComponent(id)}?${params}`, { headers: headers(apiKey) });
     if (s.ok) { signature = await s.json(); break; }
     if (s.status !== 404 || attempt === 5) await ok(s, 'signature');
     await new Promise((res) => setTimeout(res, 1000));
   }
-
   const parts = signature.text.split(':');
   const kind = signature.signature_kind ?? (parts.length === 3 ? 'provider_tee' : 'gateway');
   const [signedModel, signedRequest, signedResponse] = kind === 'provider_tee' ? parts : [null, ...parts];
@@ -191,13 +181,40 @@ export async function chatAndVerify({ apiKey, model, messages, attestation, resp
     ...(kind === 'provider_tee' ? [{ tee: kind, name: 'signed model id = requested model', pass: signedModel === model, detail: signedModel }] : []),
     { tee: kind, name: 'signer = attested TEE signing address', pass: expected.includes(signer.toLowerCase()), detail: signer },
   ];
-  return {
-    content: completion.choices?.[0]?.message?.content ?? '',
-    chatId: completion.id,
-    requestHash,
-    responseHash,
-    signature: { text: signature.text, signature: signature.signature, kind, signer },
-    checks,
-    verified: checks.every((c) => c.pass),
-  };
+  return { requestHash, responseHash, signature: { text: signature.text, signature: signature.signature, kind, signer }, checks, verified: checks.every((c) => c.pass) };
+}
+
+/** Sends one completion and verifies its signature against the attested keys. `messages` is sent exactly as given. */
+export async function chatAndVerify({ apiKey, model, messages, attestation, responseFormat }) {
+  if (!apiKey) throw new Error('NEARAI_CLOUD_API_KEY is not set');
+  const requestBody = JSON.stringify({ model, messages, stream: false, ...(responseFormat ? { response_format: responseFormat } : {}) });
+  const r = await ok(await fetch(`${NEARAI_BASE_URL}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { ...headers(apiKey), 'content-type': 'application/json' },
+    body: requestBody,
+  }), 'chat completion');
+  const responseText = await r.text();
+  const completion = JSON.parse(responseText);
+  const signed = await verifySignedExchange({ apiKey, model, id: completion.id, requestBody, responseText, attestation });
+  return { content: completion.choices?.[0]?.message?.content ?? '', chatId: completion.id, ...signed };
+}
+
+export const PRIVACY_FILTER_MODEL = process.env.NEARAI_PRIVACY_MODEL || 'openai/privacy-filter';
+
+/**
+ * PII detection with NEAR AI Cloud's privacy filter (`POST /v1/privacy/classify`, a TEE-hosted classifier, not a chat
+ * model): labelled character spans with scores for each input string. The exchange is signed like a completion.
+ */
+export async function classifyAndVerify({ apiKey, inputs, attestation, model = PRIVACY_FILTER_MODEL }) {
+  if (!apiKey) throw new Error('NEARAI_CLOUD_API_KEY is not set');
+  const requestBody = JSON.stringify({ model, input: inputs });
+  const r = await ok(await fetch(`${NEARAI_BASE_URL}/v1/privacy/classify`, {
+    method: 'POST',
+    headers: { ...headers(apiKey), 'content-type': 'application/json' },
+    body: requestBody,
+  }), 'privacy classify');
+  const responseText = await r.text();
+  const result = JSON.parse(responseText);
+  const signed = await verifySignedExchange({ apiKey, model, id: result.id, requestBody, responseText, attestation });
+  return { id: result.id, data: result.data ?? [], ...signed };
 }
