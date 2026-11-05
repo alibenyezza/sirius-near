@@ -26,7 +26,7 @@ Built at NEAR HACKATHON (Nov 2026). Tracks: **NFTs That Do Something** (`nfts`),
 |---|---|---|
 | `nfts` | Dataset NFT (NEP-171/177/178/181/199). Each one has a vault account `ds-<id>.<market>` with **no access key**, running immutable global code (NEP-591, by hash), that obeys the market only; the market pays only the current holder. Withdrawals lock the token, revoke listings, and every sale is in the NFT's history. | `near/contracts`, [`near/THREAT-MODEL.md`](near/THREAT-MODEL.md) |
 | `privacy` | Privacy audit of a dataset sample on a private TEE model of NEAR AI Cloud. Before anything is sent, a fresh nonce attestation is verified **here**: Intel TDX quote signed by Intel (dcap-qvl), signing key and nonce bound in the TDX report data, compose manifest measured in MRCONFIGID, NVIDIA GPU tokens verified with NVIDIA's keys and the same nonce. The reply's ECDSA signature must come from the attested key. The audit hash goes into the NFT. Nothing is stored. | `near/agent/lib/nearai.mjs`, `near/agent/privacy-audit.mjs`, `/verified` page |
-| `agents` | A human funds an agent's budget in the market (`fund_agent`). The agent pays training runs with a **function-call key** limited to `order_with_budget` on the market: it cannot attach deposits, send NEAR or call anything else, and the contract refuses any price above the agent's offer, the per-order limit or what is left. Exposed as an MCP server; every purchase returns a receipt. | `near/contracts`, `near/agent/mcp-server.mjs` |
+| `agents` | A human funds an agent's budget in the market (`fund_agent`). The agent pays training runs with a **function-call key** limited to `order_with_budget` on the market (and a second agent with a **gas key**, NEP-611, which holds its own refillable gas and cannot lock itself out): it cannot attach deposits, send NEAR or call anything else, and the contract refuses any price above the agent's offer, the per-order limit or what is left. Exposed as an MCP server; every purchase returns a receipt. | `near/contracts`, `near/agent/mcp-server.mjs` |
 | `security` | Before the agent pays, a **counterparty check** returns allow, warn or block with its reasons: the receiving vault must be `ds-<id>.<market>`, keyless, and run the market's vault code (read from the chain); the holder and publisher must not be on the shared blocklist (reports need evidence); price, offer and training profile must fit the policy the human wrote (`policy.json`); a missing privacy audit, orders to agents hidden in the dataset text, a sale or a price change in the last hour are warnings. A block is final; a warning needs a human at a terminal (`approve.mjs`), once. An attack demo on testnet shows a prompt-injected agent stopped by the check, the contract and the key. | `near/agent/lib/guard.mjs`, `near/agent/attack-demo.mjs`, [`near/scripts/attack-demo.log`](near/scripts/attack-demo.log) |
 
 ## Live on testnet
@@ -37,6 +37,7 @@ Built at NEAR HACKATHON (Nov 2026). Tracks: **NFTs That Do Something** (`nfts`),
 | Vault code (global, by hash) | `4NdNArHpcvARoBb1Fi7hp8dCKtVQGJNvoTFGrUN5YkBu` (sha256 `321d6034…6afc` of `sirius_vault.wasm`), published in tx `4TVkc5V747qb6vvUSqyeDXVJ2RVK5qYMp797UzsuqRNm` |
 | Demo NFT and its vault | token `4`, vault [`ds-4.sirius-ali-market.testnet`](https://testnet.nearblocks.io/address/ds-4.sirius-ali-market.testnet) |
 | Agent | [`agent.sirius-ali-carol.testnet`](https://testnet.nearblocks.io/address/agent.sirius-ali-carol.testnet): one function-call key only (`order_with_budget` on the market, 0.25 NEAR gas allowance), funded by Carol |
+| Gas-key agent | [`gk-agent.sirius-ali-carol.testnet`](https://testnet.nearblocks.io/address/gk-agent.sirius-ali-carol.testnet): one function-call **gas key** only (NEP-611: `order_with_budget` on the market, own prepaid gas, 4 nonce lanes), created and funded by Carol in tx `bK859eL11NjEuTz2yaRbtJHVjoeWDoTzGsvQ3WfpTDa` |
 | Runner | `sirius-ali-runner.testnet`, delivers with a key limited to `deliver` |
 | Poisoned NFT (attack demo) | token `5` by `sirius-ali-mallory.testnet`, 2 NEAR, its description gives payment orders to agents. Published in tx `2xyiVRinMe8Cu7Z122gXcpbJHaKvWhuRJB9RYQuoNaST` |
 
@@ -92,9 +93,29 @@ spend from the budget Carol put in the market, at most `max_per_order` per order
 cannot transfer NEAR, call any other contract or method, attach a deposit, add or delete keys, or deploy code. The
 limits of that design: the agent can still waste its budget on bad datasets that pass the policy (the check is
 there for that, and the money only leaves the market when the TEE runner delivers, or comes back to the budget after
-the deadline); when the gas allowance runs out the key stops working until Carol adds a new key; and the account
-cannot recover on its own, since only a full-access key could add one. The check runs on the agent's side: an agent
-whose code is replaced can skip it, which is why the contract and the key do not depend on it.
+the deadline). The check runs on the agent's side: an agent whose code is replaced can skip it, which is why the
+contract and the key do not depend on it.
+
+A plain function-call key has one more weakness: when its gas allowance runs out, the agent is locked out, and only a
+full-access key (which the agent must not have) could add a new one. **Gas keys** fix that.
+
+### Gas keys (NEP-611, nearcore 2.13): an agent that never locks itself out
+
+`gk-agent.sirius-ali-carol.testnet` has **one function-call gas key and nothing else**
+([`near/agent/gas-key-setup.mjs`](near/agent/gas-key-setup.mjs)). Same limits as above (market only,
+`order_with_budget` only, no deposit), but the key holds **its own prepaid gas balance**, which anyone can top up
+from outside with `TransferToGasKey`, and it has **4 nonce lanes** for parallel transactions. Carol keeps the agent
+running without ever holding a key on it. near-api-js 7.4 picks the lane by itself, so the agent code is unchanged.
+Full log: [`near/scripts/gas-key-demo.log`](near/scripts/gas-key-demo.log).
+
+| Step | Result | Transaction |
+|---|---|---|
+| The agent pays a training run on NFT 4 (check: `ALLOW`, offer 0.6 NEAR) | order `10`; gas taken from the key (0.000247 NEAR), the account balance does not move | `F5bALX1MNchW1f7rdBF49BtuRjWhcjZYqp5fejiH1DUB` |
+| Four transactions sent at once (offers too low on purpose) | one per lane, all four nonce lanes move by one; the contract refuses each (`Price above the agent's offer`) | `EyuiUhNc…`, `48w1Y2Hb…`, `BGT6mKFt…`, `3JsFweK1…` |
+| Send NEAR / call another contract / attach a deposit / call `close_agent_budget` | `AccessKeyRequiresFullAccessActionError`, `AccessKeyReceiverMismatchActionError`, `AccessKeyDepositWithFunctionCallActionError`, `AccessKeyMethodNameMismatchActionError` | (refused before execution) |
+| The agent tries to withdraw its own gas key | `AccessKeyRequiresFullAccessActionError` | (refused) |
+| Carol refills the gas key from her own account | 0.246976 → 0.296976 NEAR | `4tR3ZALFdsTe3gE2oWZBMZaULgNRRNtejsTqPmmaeLeq` |
+| The runner delivers orders 8, 9 and 10 | 0.45 NEAR each to the vault of NFT 4 | `Ae8f3id3eDAuN7mfe9KdSsu9SFMsY4LqDXgzgGHEiqDJ` (order 10) |
 
 ## Try it
 
@@ -109,7 +130,7 @@ Requirements: Node 22, and for the contracts Rust with [`cargo-near`](https://gi
    a new attestation with a new nonce on every load.
 3. **Try the holder page.** Open `/holder/4` and sign with a NEAR testnet wallet. Unless you are
    `sirius-ali-bob.testnet`, you see `Refused · <your account> does not hold NFT 4`.
-4. **Run the tests.** `npm test` in `near/agent` (30 tests, some read testnet live) and `cargo test` in
+4. **Run the tests.** `npm test` in `near/agent` (31 tests, some read testnet live) and `cargo test` in
    `near/contracts` (36 market tests, 6 vault tests). Look for `sale_in_the_middle_of_a_payout_pays_the_buyer`,
    `cannot_sell_while_withdrawal_in_flight`, `withdrawal_revokes_listing`, `agent_walks_away_above_its_offer`,
    `live: a replayed report (other nonce) fails the binding checks`, `buy_training_run never signs on a block or an
@@ -150,8 +171,8 @@ Non-NEAR services used: NEAR AI Cloud's attestation relies on Intel (PCCS collat
 
 ## Libraries and AI help
 
-- Contracts: `near-sdk` 5.30.0, `near-contract-standards` 5.30.0. Built with `cargo-near` 0.22.0, deployed with
-  `near-cli-rs` 0.30.1.
+- Contracts: `near-sdk` 5.30.1, `near-contract-standards` 5.30.1. Built with `cargo-near` 0.22.0, deployed with
+  `near-cli-rs` 0.31.1 (nearcore 2.14, testnet protocol 88).
 - Agent, web and verification: `near-api-js` 7.4.0, `@modelcontextprotocol/sdk` 1.32.2, `@phala/dcap-qvl` 0.7.0
   (Intel quote verification), `jose` 6 (NVIDIA tokens), `viem` 2 (ECDSA recovery), `zod` 4; `@hot-labs/near-connect`
   0.12.0 in the browser. The verification flow follows `near-examples/nearai-cloud-verification-example` and the

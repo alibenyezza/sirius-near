@@ -1,0 +1,29 @@
+# gas key demo 2026-11-05T23:27:29.538Z on sirius-ali-market.testnet, agent gk-agent.sirius-ali-carol.testnet, funder sirius-ali-carol.testnet
+1. The agent's only key, read from the chain
+   ed25519:CSQuvhG8GisDFoesHybBBRypuvKGcD7xjKLBHrdeAZby: GasKeyFunctionCall, receiver sirius-ali-market.testnet, methods ["order_with_budget"], allowance null, 4 nonce lanes
+   gas key balance 0.247984 NEAR, account balance 0.02 NEAR
+
+2. It pays a training run on NFT 4 (offer 0.6 NEAR) after the counterparty check
+   check: ALLOW
+   PAID order 10  tx F5bALX1MNchW1f7rdBF49BtuRjWhcjZYqp5fejiH1DUB
+   gas key 0.247984 -> 0.247736 NEAR (gas burnt 0.000247 NEAR), account 0.02 -> 0.02 NEAR (unchanged)
+
+3. Four transactions at once, one per nonce lane (offers of 0.1 NEAR, which the contract refuses)
+   refused by the contract: "Price above the agent's offer"  tx EyuiUhNcWGrcFpMoqTaQMxXZ4DcKMYcAdMWjDnpYYbEK
+   refused by the contract: "Price above the agent's offer"  tx 48w1Y2Hbna4ucr1DRRB2GTo5fRTTTtrhCgkNomFsuzXP
+   refused by the contract: "Price above the agent's offer"  tx BGT6mKFttYk9yKFcvwxUAUCEPBbpATtsPZyRuWTNJqpd
+   refused by the contract: "Price above the agent's offer"  tx 3JsFweK1aYc1w6sZv72pHRkC57qRNoKVEFJTxqYg6nAK
+   lanes before ["276408755000005","276408755000002","276408755000002","276408755000002"]
+   lanes after  ["276408755000006","276408755000003","276408755000003","276408755000003"]
+
+4. The same key tries what a hijacked agent would try
+   send 0.01 NEAR to sirius-ali-mallory.testnet: refused by the protocol: AccessKeyRequiresFullAccessActionError Access key requires full access
+   call a contract of sirius-ali-mallory.testnet: refused by the protocol: AccessKeyReceiverMismatchActionError Access key receiver sirius-ali-market.testnet does not match transaction receiver sirius-ali-mallory.testnet
+   attach 0.01 NEAR to order on the market: refused by the protocol: AccessKeyDepositWithFunctionCallActionError Deposit is not allowed with function call
+   call close_agent_budget on the market: refused by the protocol: AccessKeyMethodNameMismatchActionError Access key does not allow method close_agent_budget
+   drain its own gas key: refused by the protocol: AccessKeyRequiresFullAccessActionError Access key requires full access
+
+5. sirius-ali-carol.testnet refills the gas key from outside (TransferToGasKey), holding no key on the agent
+   gas key 0.246976 -> 0.296976 NEAR  tx 4tR3ZALFdsTe3gE2oWZBMZaULgNRRNtejsTqPmmaeLeq
+
+Budget: 0 NEAR left, 1.5 NEAR spent. Order 10 goes to the vault of NFT 4 on delivery, or back to the budget after its deadline.

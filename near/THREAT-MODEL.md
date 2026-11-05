@@ -46,6 +46,8 @@ stops them?**
   exists, the transfer fails and the funds stay in the vault, while the history records the attempted amount.
 - Attestation of the training enclave is checked off-chain (see #13), not by the contract.
 - Agent budgets and the "paid from a budget" flag of each order are also stored at the contract's expense.
-- An agent's function-call key spends its gas allowance (0.25 NEAR on the demo agent); when it runs out, the agent
-  cannot send transactions until a human adds a new key. It never gives access to the budget itself, which only the
-  funder can close.
+- A plain function-call key spends its gas allowance (0.25 NEAR on `agent.sirius-ali-carol.testnet`); when it runs
+  out, the agent cannot send transactions until a human adds a new key. The gas-key agent
+  (`gk-agent.sirius-ali-carol.testnet`, NEP-611) has no allowance: its key holds prepaid gas that the funder tops up
+  from outside, so it cannot lock itself out; an empty key only pauses it. Neither key gives access to the budget,
+  which only the funder can close.
