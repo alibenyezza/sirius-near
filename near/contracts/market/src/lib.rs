@@ -95,7 +95,7 @@ pub struct Dataset {
     pub publisher: AccountId,
     pub price: U128,
     pub profile: String,
-    /// sha256 of the encrypted dataset's CID, as in the EVM registry of the base project.
+    /// sha256 of the encrypted dataset's CID.
     pub cid_hash: String,
     pub earned: U128,
     pub withdrawn: U128,

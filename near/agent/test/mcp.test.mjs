@@ -15,7 +15,7 @@ async function connect(options) {
 
 const result = (r) => r.structuredContent.result;
 
-test('lists the NEAR tools with the base project names', async () => {
+test('lists the NEAR tools', async () => {
   const client = await connect();
   const names = (await client.listTools()).tools.map((t) => t.name).sort();
   assert.deepEqual(names, ['buy_training_run', 'check_counterparty', 'get_budget', 'get_dataset', 'get_receipt', 'report_account', 'search_datasets', 'verify_private_ai']);

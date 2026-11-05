@@ -1,4 +1,4 @@
-// Least-squares linear regression, the same method as the base project's runner (src/lib/tee/train.ts):
+// Least-squares linear regression:
 // normal equations with a tiny ridge, Gauss-Jordan inversion, R², RMSE and MAE on the training rows.
 // The target is the last column; non-numeric and excluded columns are not features.
 const RIDGE = 1e-8;

@@ -18,7 +18,7 @@ import { attestModel, DEFAULT_MODEL } from './lib/nearai.mjs';
 import { decide, gatherSignals, loadBlocklist, loadPolicy } from './lib/guard.mjs';
 
 const PORT = Number(process.env.PORT || 4320);
-const LOGO = readFileSync(new URL('../../public/images/sirius-mark.png', import.meta.url));
+const LOGO = readFileSync(new URL('./assets/sirius-mark.png', import.meta.url));
 const NEARBLOCKS = 'https://testnet.nearblocks.io';
 
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);

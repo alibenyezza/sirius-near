@@ -1,9 +1,0 @@
-{
-  "extends": "./tsconfig.json",
-  "include": [
-    "hardhat.config.ts",
-    "test/escrow-v7.test.ts",
-    "test/helpers/billing.ts",
-    "scripts/export-abi.ts"
-  ]
-}

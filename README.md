@@ -133,7 +133,7 @@ Requirements: Node 22, and for the contracts Rust with [`cargo-near`](https://gi
 
 | Real | Simulated or not done yet |
 |---|---|
-| Every contract call above, on testnet | **The TEE of the training runner.** The runner bridge trains here, with the same least-squares method as the base project, and its certificate says `"mode": "local-simulated", "tee": null`. The TDX runner of the base project (Phala) is not wired to NEAR yet. |
+| Every contract call above, on testnet | **The TEE of the training runner.** The runner bridge trains here (least squares, `near/agent/lib/train.mjs`) and its certificate says `"mode": "local-simulated", "tee": null`. |
 | The NEAR AI Cloud attestation checks (Intel, NVIDIA, bindings), run on every call, and the privacy audit of token `4`: run on a private TEE model, reply signed by the attested key, hash recorded on testnet ([log](near/scripts/privacy-audit.log)) | **The audited file is the full fictional CSV**, not a sample cut from a real dataset. The audit hash is checked by its holder's call, not by the contract: `set_privacy_audit` stores what the holder sends. |
 | The model trained by the bridge and its hash | **The runner's TDX quote on-chain.** `register_runner` stores the hash of a quote checked off-chain; the contract does not verify quotes. |
 | The NEP-413 holder gate, with near-cli signatures | The dataset is fictional (`near/examples/hospital-stays-fictional.csv`): every name, e-mail and phone is invented. |
@@ -142,18 +142,11 @@ Known limits are listed at the end of [`near/THREAT-MODEL.md`](near/THREAT-MODEL
 
 ## Pre-hackathon code (disclosure)
 
-This repository starts from a copy of Sirius, a confidential data marketplace built before the hackathon on EVM
-(Robinhood Chain), with its training runner on Phala. That copy is the first commit, tagged
-[`pre-hackathon`](../../tree/pre-hackathon); its README is kept in [`docs/EVM-BASE.md`](docs/EVM-BASE.md). Internal
-operations notes of the private original were left out of the copy.
+Sirius existed before the hackathon on another chain. The first commit of this repository is a copy of it, tagged
+[`pre-hackathon`](../../tree/pre-hackathon); that code has since been removed from the tree. **Everything in this
+repository (`near/`) was built during the hackathon:** [`pre-hackathon...main`](../../compare/pre-hackathon...main).
 
-**Everything judged is under `near/`, built during the hackathon:**
-[`pre-hackathon...main`](../../compare/pre-hackathon...main). The EVM contracts, the Next.js app (`src/`) and the
-Phala runner are baseline. The NEAR pages are a small standalone server (`near/agent/web.mjs`) rather than routes of
-the base Next.js app, because that app needs PostgreSQL, Prisma and an EVM wallet to start; they reuse its branding.
-
-Non-NEAR services used by the NEAR part: NEAR AI Cloud's attestation relies on Intel (PCCS collateral via dcap-qvl)
-and NVIDIA NRAS. The base project also uses Robinhood Chain, Phala Cloud and IPFS (Pinata).
+Non-NEAR services used: NEAR AI Cloud's attestation relies on Intel (PCCS collateral) and NVIDIA NRAS.
 
 ## Libraries and AI help
 

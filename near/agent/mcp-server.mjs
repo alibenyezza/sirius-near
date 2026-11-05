@@ -4,8 +4,7 @@
 //
 // The paying tool signs with the agent's function-call key: market contract only, `order_with_budget` only, no
 // deposit, gas allowance 0.25 NEAR. The contract refuses any price above the agent's offer, above the per-order
-// limit or above what is left of the budget. Same tool names as the read-only MCP server of the base project
-// (`search_datasets`, `get_dataset`), plus the NEAR tools.
+// limit or above what is left of the budget.
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';

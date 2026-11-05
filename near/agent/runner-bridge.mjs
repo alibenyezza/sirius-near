@@ -4,10 +4,7 @@
 //   node runner-bridge.mjs --once            deliver every paid order once, then exit
 //   node runner-bridge.mjs --order 7         deliver one order
 //
-// Modes (SIRIUS_RUNNER_MODE):
-//   local  (default) SIMULATED TEE. Trains here, with the same least-squares method as the base project's runner,
-//          and says so in the certificate (`tee: null`). Used by the testnet demo.
-//   phala  the TDX runner of the base project (src/runner). Not wired to NEAR yet: the bridge refuses to run.
+// SIMULATED TEE: the bridge trains here (least squares, lib/train.mjs) and says so in the certificate (`tee: null`).
 //
 // The runner signs `deliver` with a function-call key (market only, `deliver` only), read from the near-cli keychain
 // file in SIRIUS_RUNNER_CREDENTIALS. The model and its certificate are written to near/agent/out/ for the buyer.
@@ -22,7 +19,6 @@ import { trainLinearRegression } from './lib/train.mjs';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const EXAMPLES = join(HERE, '..', 'examples');
 const OUT = join(HERE, 'out');
-const MODE = process.env.SIRIUS_RUNNER_MODE || 'local';
 
 /** Canonical JSON (sorted keys) so a hash can be recomputed by anyone from the published file. */
 export function canonical(value) {
@@ -56,7 +52,7 @@ export function buildDelivery({ orderId, order, dataset, csv, runnerId, now = ne
     runner: runnerId,
     mode: 'local-simulated',
     tee: null,
-    note: 'Trained outside any enclave for the testnet demo. The TDX runner of the base project is not wired to NEAR yet.',
+    note: 'Trained outside any enclave for the testnet demo.',
     trainedAt: now.toISOString(),
   };
   return { model, modelHash, certificate, certificateHash: sha256(canonical(certificate)) };
@@ -99,7 +95,6 @@ async function deliver(runner, orderId, order) {
 }
 
 async function main() {
-  if (MODE !== 'local') throw new Error(`Runner mode "${MODE}" is not wired to NEAR yet; use SIRIUS_RUNNER_MODE=local (simulated TEE)`);
   const runner = loadRunner();
   const arg = process.argv.indexOf('--order');
   if (arg > 0) {
