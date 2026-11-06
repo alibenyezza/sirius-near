@@ -1,0 +1,14 @@
+# Hosted demo of the read-only pages (near/agent/web.mjs): no secret, no database, every value read from testnet.
+# Render: New > Blueprint > this repository.
+services:
+  - type: web
+    name: sirius-near
+    runtime: node
+    plan: free
+    rootDir: near/agent
+    buildCommand: npm ci --omit=dev
+    startCommand: node web.mjs
+    healthCheckPath: /logo.png
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
