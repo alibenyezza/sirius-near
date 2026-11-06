@@ -1,0 +1,151 @@
+
+== 1. Alice seals the dataset to the runner's public key (runner-seal.pub); the sealed file is all she publishes
+sealed ../examples/hospital-stays-fictional.csv (19382 bytes) for runner key 9667e506f4a535bc…
+  -> ../examples/hospital-stays-fictional.csv.sealed (19462 bytes)
+  cid_hash bc5dfed254bb3c8044dcb099112ea9bda4ee83fbd6aaa917847546ab0df4026c
+../examples/hospital-stays-fictional.csv.sealed
+  sealed format: yes (SRSEAL01, X25519 + XChaCha20-Poly1305)
+  sha256 bc5dfed254bb3c8044dcb099112ea9bda4ee83fbd6aaa917847546ab0df4026c
+  opens with the runner key: yes (240 rows)
+
+== 2. Alice publishes the NFT: cid_hash = sha256 of the sealed file (bc5dfed254bb3c8044dcb099112ea9bda4ee83fbd6aaa917847546ab0df4026c)
+sirius-ali-alice.testnet -> publish | tx 8cTsAG1Dp8MtjUGoALK6KvnLkFTuD6NhaSP2mzJw7TVZ
+token 6, vault ds-6.sirius-ali-market.testnet (publish returns true; the id is nft_total_supply)
+
+== 3. End-to-end encrypted audit on NEAR AI Cloud, bound to the sealed file's hash
+Dataset ../examples/hospital-stays-fictional.csv
+  sealed copy ../examples/hospital-stays-fictional.csv.sealed
+  sha256 bc5dfed254bb3c8044dcb099112ea9bda4ee83fbd6aaa917847546ab0df4026c (of the sealed file, as recorded in the NFT)
+
+Attestation of Qwen/Qwen3.8-27B (ed25519) with a fresh nonce 6dd1afe476f1f2f4455c293aa4bc6bbe0f2bfc336f6449ca23f15e2cf86a7b18
+  PASS  [model] model served by 1 attested TEE node(s)  (Qwen/Qwen3.8-27B)
+  PASS  [model] nonce echoed  (6dd1afe476f1f2f4455c293aa4bc6bbe0f2bfc336f6449ca23f15e2cf86a7b18)
+  PASS  [model] Intel TDX quote signed by Intel, TCB up to date  (TCB UpToDate)
+  PASS  [model] TDX debug mode off  (td_attributes 0000001000000000)
+  PASS  [model] ed25519 signing identity has the expected size  (32 bytes)
+  PASS  [model] signing key and nonce bound in TDX report data  (89154a43a47684742c3d1753252bb6f49f61da9d8c84fc9b1def2df130cb2d93)
+  PASS  [model] E2EE public key = attested signing identity  (89154a43a4768474…)
+  PASS  [model] compose manifest hashes to the attested compose hash  (5e513dbd72e1c0f291f748ad06d4dbc1df55659869e649376213ac7b3c9d2e29)
+  PASS  [model] compose hash measured in MRCONFIGID  (015e513dbd72e1c0f291f748ad06d4dbc1df55659869e649376213ac7b3c9d2e29)
+  PASS  [model] MRTD matches the reported TCB info  (df4d77c857de652bd0fafa34…)
+  PASS  [model] event log replays to RTMR3 (app id, compose hash, keys)  (b0dfe1564e8dca48c258345d…)
+  PASS  [model] JWT token signed by NVIDIA  (NVIDIA-PLATFORM-ATTESTATION)
+  PASS  [model] JWT eat_nonce = our nonce  (6dd1afe476f1f2f4455c293aa4bc6bbe0f2bfc336f6449ca23f15e2cf86a7b18)
+  PASS  [model] NVIDIA overall attestation result  (true)
+  PASS  [model] GPU-0 token signed by NVIDIA  (GH100)
+  PASS  [model] GPU-0 eat_nonce = our nonce  (6dd1afe476f1f2f4455c293aa4bc6bbe0f2bfc336f6449ca23f15e2cf86a7b18)
+  PASS  [model] GPU-0 secure boot on, debug off, measurements ok  (GH100 secboot=true dbgstat=disabled measres=success)
+  PASS  [gateway] nonce echoed  (6dd1afe476f1f2f4455c293aa4bc6bbe0f2bfc336f6449ca23f15e2cf86a7b18)
+  PASS  [gateway] Intel TDX quote signed by Intel, TCB up to date  (TCB UpToDate)
+  PASS  [gateway] TDX debug mode off  (td_attributes 0000001000000000)
+  PASS  [gateway] ed25519 signing identity has the expected size  (32 bytes)
+  PASS  [gateway] signing key and nonce bound in TDX report data  (40599fb284f43953bb356b09080fd803c960fc10285ad90eca462ca711ad4acb)
+  PASS  [gateway] report_data field = report data in the quote  (gateway field)
+  PASS  [gateway] compose manifest hashes to the attested compose hash  (dc14d62b75ffde97f64fdba40c6be681b6818eb12312e1adee60b3cd4de2533b)
+  PASS  [gateway] compose hash measured in MRCONFIGID  (01dc14d62b75ffde97f64fdba40c6be681b6818eb12312e1adee60b3cd4de2533b)
+  PASS  [gateway] MRTD matches the reported TCB info  (7fe60787222bd394cb516abc…)
+  PASS  [gateway] event log replays to RTMR3 (app id, compose hash, keys)  (2f0fabe10717f5d706120a70…)
+
+End-to-end encrypted exchange: sample encrypted to model key 89154a43a4768474…, reply encrypted to our one-time key 03ca54ca94ff7956…
+  PASS  [e2ee] request content encrypted to the attested model key  (89154a43a4768474…)
+  PASS  [e2ee] reply arrived encrypted and opened with our one-time key  (1573 bytes of ciphertext)
+  PASS  [provider_tee] signed text has the shape of its signature kind  (provider_tee)
+  PASS  [provider_tee] signed request hash = sha256(request we sent)  (d1450bc586e86536d64da7c2c465b34b609549adea657dced3138555b5c513b1)
+  PASS  [provider_tee] signed response hash = sha256(response we got)  (037892251e2bf612f041c8014c560afeff7a47844503fc2f1853c361fa6cdf84)
+  PASS  [provider_tee] signed model id = requested model  (Qwen/Qwen3.8-27B)
+  PASS  [provider_tee] signer = attested TEE signing key (Ed25519)  (89154a43a47684742c3d1753252bb6f49f61da9d8c84fc9b1def2df130cb2d93)
+
+Verdict: publishable_after_removing_pii
+  personal data: patient_name (name) Contains full patient names, which directly identify individuals.
+  personal data: email (email) Contains email addresses, which can directly identify or contact individuals.
+  personal data: phone (phone) Contains telephone numbers, which can directly identify or contact individuals.
+  personal data: postcode (postcode) Contains postal codes that reveal location and can contribute to re-identification.
+  safe columns: age, bmi, smoker, prior_visits, length_of_stay_days
+
+Public card: De-identified patient health indicators
+  A de-identified dataset of patient health metrics without direct identifiers, suitable for statistical analysis.
+
+Second detector: openai/privacy-filter (privacy classify), its own attestation, nonce 848f31f07396ff057a05f70e66ad97b93dc0d858c67eed155f4028370bdbb8cf
+  transport: TLS ending inside the attested gateway TEE (NEAR AI offers no E2EE on /privacy/classify)
+  PASS  [model] model served by 1 attested TEE node(s)  (openai/privacy-filter)
+  PASS  [model] nonce echoed  (848f31f07396ff057a05f70e66ad97b93dc0d858c67eed155f4028370bdbb8cf)
+  PASS  [model] Intel TDX quote signed by Intel, TCB up to date  (TCB UpToDate)
+  PASS  [model] TDX debug mode off  (td_attributes 0000001000000000)
+  PASS  [model] ecdsa signing identity has the expected size  (20 bytes)
+  PASS  [model] signing key and nonce bound in TDX report data  (0x17ce5f31b1d911a7416245230a09bad34b04b7cf)
+  PASS  [model] compose manifest hashes to the attested compose hash  (5e513dbd72e1c0f291f748ad06d4dbc1df55659869e649376213ac7b3c9d2e29)
+  PASS  [model] compose hash measured in MRCONFIGID  (015e513dbd72e1c0f291f748ad06d4dbc1df55659869e649376213ac7b3c9d2e29)
+  PASS  [model] MRTD matches the reported TCB info  (df4d77c857de652bd0fafa34…)
+  PASS  [model] event log replays to RTMR3 (app id, compose hash, keys)  (b0dfe1564e8dca48c258345d…)
+  PASS  [model] JWT token signed by NVIDIA  (NVIDIA-PLATFORM-ATTESTATION)
+  PASS  [model] JWT eat_nonce = our nonce  (848f31f07396ff057a05f70e66ad97b93dc0d858c67eed155f4028370bdbb8cf)
+  PASS  [model] NVIDIA overall attestation result  (true)
+  PASS  [model] GPU-0 token signed by NVIDIA  (GH100)
+  PASS  [model] GPU-0 eat_nonce = our nonce  (848f31f07396ff057a05f70e66ad97b93dc0d858c67eed155f4028370bdbb8cf)
+  PASS  [model] GPU-0 secure boot on, debug off, measurements ok  (GH100 secboot=true dbgstat=disabled measres=success)
+  PASS  [gateway] nonce echoed  (848f31f07396ff057a05f70e66ad97b93dc0d858c67eed155f4028370bdbb8cf)
+  PASS  [gateway] Intel TDX quote signed by Intel, TCB up to date  (TCB UpToDate)
+  PASS  [gateway] TDX debug mode off  (td_attributes 0000001000000000)
+  PASS  [gateway] ecdsa signing identity has the expected size  (20 bytes)
+  PASS  [gateway] signing key and nonce bound in TDX report data  (0xb98a789cdc4817275f5155593ba73ef2a957e779)
+  PASS  [gateway] report_data field = report data in the quote  (gateway field)
+  PASS  [gateway] compose manifest hashes to the attested compose hash  (dc14d62b75ffde97f64fdba40c6be681b6818eb12312e1adee60b3cd4de2533b)
+  PASS  [gateway] compose hash measured in MRCONFIGID  (01dc14d62b75ffde97f64fdba40c6be681b6818eb12312e1adee60b3cd4de2533b)
+  PASS  [gateway] MRTD matches the reported TCB info  (7fe60787222bd394cb516abc…)
+  PASS  [gateway] event log replays to RTMR3 (app id, compose hash, keys)  (2f0fabe10717f5d706120a70…)
+
+Signed classify reply
+  PASS  [gateway] signed text has the shape of its signature kind  (gateway)
+  PASS  [gateway] signed request hash = sha256(request we sent)  (8c04307e341e978e0bc41ddebdefa8c3b2ecda754d3e665cd11d22b68c752600)
+  PASS  [gateway] signed response hash = sha256(response we got)  (0bd853f1a7d01be1183ea2dab2e2267729fe0dd375819536538707535203bdaa)
+  PASS  [gateway] signer = attested TEE signing address  (0xb98A789Cdc4817275F5155593ba73EF2a957e779)
+  personal data: patient_name (private_person) 20 span(s), score up to 1.000
+  personal data: email (private_email) 20 span(s), score up to 1.000
+  personal data: phone (private_phone) 20 span(s), score up to 1.000
+  personal data: postcode (private_address) 20 span(s), score up to 1.000
+  both detectors: patient_name, email, phone, postcode
+  only the model: -
+  only the filter: -
+
+VERIFIED: both detectors ran in attested TEEs, the model saw the sample end-to-end encrypted, every reply is signed by an attested key
+Audit hash 5e125fe2de541d4d7a536c174edcd70fec2a274cbe35c7c8cd752110f653c633
+
+
+== 4. Alice records the audit hash in the NFT
+sirius-ali-alice.testnet -> set_privacy_audit | tx FiFwd8f9zj3qvemTD5gGTMteJmy2wcz2Rvnng5LPrt1D
+
+
+== 5. Carol's agent checks the NFT and pays a run from its budget, over MCP
+1. found dataset 6 "Hospital stays, sealed (fictional)" held by sirius-ali-alice.testnet, price 0.5 NEAR, vault ds-6.sirius-ali-market.testnet
+2. NEAR AI Cloud Qwen/Qwen3.8-27B: 26/26 checks passed, verified=true
+3. budget from sirius-ali-carol.testnet: 1 NEAR left, at most 0.6 per order
+4. offer 0.25 NEAR: paid=false, reason "Price above the agent's offer"
+5. offer 0.6 NEAR: paid=true
+6. receipt {
+  "orderId": "11",
+  "buyer": "agent.sirius-ali-carol.testnet",
+  "dataset": {
+    "tokenId": "6",
+    "title": "Hospital stays, sealed (fictional)",
+    "holderAtReceipt": "sirius-ali-alice.testnet",
+    "vault": "ds-6.sirius-ali-market.testnet"
+  },
+  "profile": "linear_regression",
+  "priceNear": "0.5",
+  "status": "Paid",
+  "deadline": "2026-11-06T11:30:18.151Z",
+  "delivery": null,
+  "paymentTx": "DExsMMkmqJMbR66sUgep9XZnzwWsFddE3RKZm4zTd7As",
+  "explorer": "https://testnet.nearblocks.io/txns/DExsMMkmqJMbR66sUgep9XZnzwWsFddE3RKZm4zTd7As"
+}
+   budget left 0.5 NEAR, spent 1
+
+== 6. The runner finds the sealed file by its hash, opens it in memory, trains and delivers order 11
+order 11: sealed dataset opened in memory, delivered, R²=0.840, model 062f7b33a88d…, tx https://testnet.nearblocks.io/txns/5Bt2Se6kCkrnvMiCrQTkNGSzgRQSViLEHuBS1uEjdGBv
+{
+ "datasetSealed": true,
+ "sealKey": "9667e506f4a535bc5a89a84c693873ccb6deae55b3eded3cc2b9d0e92bf68075",
+ "sealFormat": "SRSEAL01 X25519-HKDF-SHA256-XChaCha20Poly1305",
+ "mode": "local-simulated",
+ "modelHash": "062f7b33a88d7430021de147abb80fded34c6c57428a051bbd710e3b8febc6f8"
+}

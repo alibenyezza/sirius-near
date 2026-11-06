@@ -38,6 +38,17 @@ stops them?**
 | 13 | A fake runner delivers a fake model to release payment | Only accounts registered by the market owner can `deliver`. What is checked on-chain: the caller is a registered, non-revoked runner. What is **not** checked on-chain: the TDX quote itself. The owner verifies it off-chain before registering the runner, and the quote hash is stored next to the runner so anyone can check it again. | `market::register_runner`, `market::deliver` |
 | 14 | The runner never delivers, and the data buyer's money is stuck | After the deadline, the data buyer calls `refund`. Only an order that is still `Paid` can be refunded, and a delivered order cannot be. | `market::refund` |
 
+## Who can read the data
+
+| Party | What it sees | Why it cannot see more |
+|---|---|---|
+| Anyone (chain, mirrors, explorers) | sha256 of the sealed file in the NFT, the sealed file itself | It is sealed to the runner's X25519 key (XChaCha20-Poly1305, `lib/seal.mjs`); a flipped byte or another key fails the AEAD tag (`test/seal.test.mjs`). |
+| NEAR AI's gateway and operators | ciphertext of the audit sample for the model | The sample is encrypted to the model's Ed25519 key, which the Intel TDX quote binds with our nonce (checked before encrypting). The gateway cannot swap the key: `X-Model-Pub-Key` pins it and `x-no-aliasing` forbids rerouting. |
+| NEAR AI's model TEE | the 20-row sample, decrypted inside the enclave | It is the attested model: debug off, RTMR3 and MRCONFIGID match, GPUs attested by NVIDIA. Its reply is encrypted to a one-time client key. |
+| Privacy filter and gateway TEEs | the same sample, column by column, over TLS | `/privacy/classify` has no E2EE (it classifies the ciphertext itself). Both TEEs are attested; `--no-filter` skips this step. |
+| The runner | the full dataset, in memory, during training | It holds the seal key. **Simulated TEE on testnet:** the key lives on the runner's machine, not in an enclave. |
+| The data buyer | the trained model and its certificate | The dataset never leaves the runner. |
+
 ## Known limits (stated plainly)
 
 - History entries and orders are stored by the market contract. The contract pays their storage from its own balance.

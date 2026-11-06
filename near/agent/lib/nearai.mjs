@@ -14,6 +14,10 @@ import { createHash, randomBytes } from 'node:crypto';
 import { Quote, getCollateralAndVerify } from '@phala/dcap-qvl';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { recoverMessageAddress } from 'viem';
+import { ed25519, edwardsToMontgomeryPriv, edwardsToMontgomeryPub, x25519 } from '@noble/curves/ed25519';
+import { hkdf } from '@noble/hashes/hkdf';
+import { sha256 as sha256Bytes } from '@noble/hashes/sha256';
+import { xchacha20poly1305 } from '@noble/ciphers/chacha';
 
 export const NEARAI_BASE_URL = process.env.NEARAI_CLOUD_BASE_URL || 'https://cloud-api.near.ai';
 export const NVIDIA_NRAS_URL = 'https://nras.attestation.nvidia.com/v3/attest/gpu';
@@ -42,9 +46,10 @@ export async function privateModels() {
   return data.filter((m) => m.owned_by === 'nearai').map((m) => m.id);
 }
 
-export async function fetchAttestation(model, nonce, apiKey) {
-  const params = new URLSearchParams({ model, signing_algo: 'ecdsa', nonce });
-  const r = await fetch(`${NEARAI_BASE_URL}/v1/attestation/report?${params}`, { headers: headers(apiKey) });
+export async function fetchAttestation(model, nonce, apiKey, signingAlgo = 'ecdsa') {
+  // provider=near and x-no-aliasing: the gateway may not swap the model id or route to another provider's evidence
+  const params = new URLSearchParams({ model, provider: 'near', signing_algo: signingAlgo, include_tls_fingerprint: 'false', nonce });
+  const r = await fetch(`${NEARAI_BASE_URL}/v1/attestation/report?${params}`, { headers: { ...headers(apiKey), 'x-no-aliasing': 'true' } });
   return (await ok(r, 'attestation report')).json();
 }
 
@@ -54,6 +59,21 @@ function tdReport(quote) {
 }
 
 const hex = (bytes) => Buffer.from(bytes).toString('hex');
+
+/** RTMR3 from the event log: SHA-384 chain over the imr-3 events, each digest recomputed from its payload. */
+export function replayRtmr3(eventLog) {
+  const events = typeof eventLog === 'string' ? JSON.parse(eventLog) : eventLog;
+  let rtmr3 = Buffer.alloc(48);
+  for (const e of events) {
+    if (e.imr !== 3) continue;
+    const type = Buffer.alloc(4);
+    type.writeUInt32LE(e.event_type);
+    const digest = createHash('sha384').update(Buffer.concat([type, Buffer.from(':'), Buffer.from(e.event ?? '', 'utf8'), Buffer.from(':'), Buffer.from(e.event_payload ?? '', 'hex')])).digest();
+    if (e.digest && e.digest.toLowerCase() !== digest.toString('hex')) throw new Error(`digest mismatch for event ${e.event}`);
+    rtmr3 = createHash('sha384').update(Buffer.concat([rtmr3, digest])).digest();
+  }
+  return rtmr3.toString('hex');
+}
 
 /** Checks one TEE (model node or gateway) of the report. Every check is listed, passed or not. */
 export async function verifyTee(attestation, nonce, label) {
@@ -73,15 +93,30 @@ export async function verifyTee(attestation, nonce, label) {
   } catch (e) {
     add('Intel TDX quote signed by Intel, TCB up to date', false, e.message);
   }
+  add('TDX debug mode off', (td.tdAttributes[0] & 1) === 0, `td_attributes ${hex(td.tdAttributes)}`);
+  // report data = signing identity zero-padded to 32 bytes || our nonce. The identity is a 20-byte Ethereum address
+  // for ecdsa and the 32-byte Ed25519 public key (the E2EE key) for ed25519.
+  const algo = attestation.signing_algo ?? 'ecdsa';
   const address = (attestation.signing_address ?? '').toLowerCase().replace(/^0x/, '');
+  const size = { ecdsa: 40, ed25519: 64 }[algo];
+  add(`${algo} signing identity has the expected size`, address.length === size, `${address.length / 2} bytes`);
   const expected = address.padEnd(64, '0') + nonce;
-  add('signing key and nonce bound in TDX report data', hex(td.reportData) === expected, `0x${address}`);
+  add('signing key and nonce bound in TDX report data', hex(td.reportData) === expected, algo === 'ecdsa' ? `0x${address}` : address);
+  if (attestation.report_data) add('report_data field = report data in the quote', attestation.report_data.toLowerCase().replace(/^0x/, '') === hex(td.reportData), 'gateway field');
+  if (algo === 'ed25519' && attestation.signing_public_key !== undefined) {
+    add('E2EE public key = attested signing identity', attestation.signing_public_key.toLowerCase() === address, attestation.signing_public_key.slice(0, 16) + '…');
+  }
   const info = attestation.info ?? {};
   const composeHash = info.compose_hash ?? info.tcb_info?.compose_hash;
   const appCompose = info.tcb_info?.app_compose;
   add('compose manifest hashes to the attested compose hash', !!appCompose && sha256(appCompose) === composeHash, composeHash);
   add('compose hash measured in MRCONFIGID', hex(td.mrConfigId).startsWith(`01${composeHash}`), hex(td.mrConfigId).slice(0, 66));
   if (info.tcb_info?.mrtd) add('MRTD matches the reported TCB info', hex(td.mrTd) === info.tcb_info.mrtd, info.tcb_info.mrtd.slice(0, 24) + '…');
+  if (attestation.event_log) {
+    let rtmr3;
+    try { rtmr3 = replayRtmr3(attestation.event_log); } catch (e) { rtmr3 = e.message; }
+    add('event log replays to RTMR3 (app id, compose hash, keys)', rtmr3 === hex(td.rtMr3), String(rtmr3).slice(0, 24) + '…');
+  }
   return checks;
 }
 
@@ -125,9 +160,9 @@ export async function verifyGpu(nvidiaPayload, nonce, label = 'model') {
 }
 
 /** Full attestation of a model with a fresh nonce: every model TEE node and the gateway. */
-export async function attestModel(model = DEFAULT_MODEL, apiKey = process.env.NEARAI_CLOUD_API_KEY) {
+export async function attestModel(model = DEFAULT_MODEL, apiKey = process.env.NEARAI_CLOUD_API_KEY, { signingAlgo = 'ecdsa' } = {}) {
   const nonce = generateNonce();
-  const report = await fetchAttestation(model, nonce, apiKey);
+  const report = await fetchAttestation(model, nonce, apiKey, signingAlgo);
   const checks = [];
   const nodes = report.model_attestations ?? [];
   checks.push({ tee: 'model', name: `model served by ${nodes.length} attested TEE node(s)`, pass: nodes.length > 0, detail: model });
@@ -138,9 +173,12 @@ export async function attestModel(model = DEFAULT_MODEL, apiKey = process.env.NE
     else checks.push({ tee: label, name: 'NVIDIA GPU attestation', pass: false, detail: 'no GPU evidence' });
   }
   if (report.gateway_attestation) checks.push(...await verifyTee(report.gateway_attestation, nonce, 'gateway'));
+  const e2eeKeys = signingAlgo === 'ed25519' ? [...new Set(nodes.map((n) => n.signing_public_key).filter(Boolean))] : [];
   return {
     model,
     nonce,
+    signingAlgo,
+    e2eeKeys,
     checkedAt: new Date().toISOString(),
     signingAddresses: {
       modelTee: [...new Set(nodes.map((n) => n.signing_address).filter(Boolean))],
@@ -161,8 +199,9 @@ export async function verifySignedExchange({ apiKey, model, id, requestBody, res
   const requestHash = sha256(requestBody);
   const responseHash = sha256(responseText);
   let signature;
+  const algo = attestation.signingAlgo ?? 'ecdsa';
   for (let attempt = 1; attempt <= 5; attempt++) {
-    const params = new URLSearchParams({ model, signing_algo: 'ecdsa' });
+    const params = new URLSearchParams({ model, signing_algo: algo });
     const s = await fetch(`${NEARAI_BASE_URL}/v1/signature/${encodeURIComponent(id)}?${params}`, { headers: headers(apiKey) });
     if (s.ok) { signature = await s.json(); break; }
     if (s.status !== 404 || attempt === 5) await ok(s, 'signature');
@@ -171,15 +210,18 @@ export async function verifySignedExchange({ apiKey, model, id, requestBody, res
   const parts = signature.text.split(':');
   const kind = signature.signature_kind ?? (parts.length === 3 ? 'provider_tee' : 'gateway');
   const [signedModel, signedRequest, signedResponse] = kind === 'provider_tee' ? parts : [null, ...parts];
-  const signer = await recoverMessageAddress({ message: signature.text, signature: signature.signature });
   const expected = (kind === 'provider_tee' ? attestation.signingAddresses.modelTee : attestation.signingAddresses.gateway)
     .map((a) => a.toLowerCase());
+  // ecdsa: recover the Ethereum address; ed25519: the signature must verify under one of the attested public keys
+  const signer = algo === 'ed25519'
+    ? (expected.find((pub) => { try { return ed25519.verify(Buffer.from(signature.signature.replace(/^0x/, ''), 'hex'), Buffer.from(signature.text, 'utf8'), Buffer.from(pub, 'hex')); } catch { return false; } }) ?? `no attested key verifies (${signature.signing_address ?? '?'})`)
+    : await recoverMessageAddress({ message: signature.text, signature: signature.signature });
   const checks = [
     { tee: kind, name: 'signed text has the shape of its signature kind', pass: parts.length === (kind === 'provider_tee' ? 3 : 2), detail: kind },
     { tee: kind, name: 'signed request hash = sha256(request we sent)', pass: signedRequest === requestHash, detail: requestHash },
     { tee: kind, name: 'signed response hash = sha256(response we got)', pass: signedResponse === responseHash, detail: responseHash },
     ...(kind === 'provider_tee' ? [{ tee: kind, name: 'signed model id = requested model', pass: signedModel === model, detail: signedModel }] : []),
-    { tee: kind, name: 'signer = attested TEE signing address', pass: expected.includes(signer.toLowerCase()), detail: signer },
+    { tee: kind, name: `signer = attested TEE signing ${algo === 'ed25519' ? 'key (Ed25519)' : 'address'}`, pass: expected.includes(signer.toLowerCase()), detail: signer },
   ];
   return { requestHash, responseHash, signature: { text: signature.text, signature: signature.signature, kind, signer }, checks, verified: checks.every((c) => c.pass) };
 }
@@ -217,4 +259,71 @@ export async function classifyAndVerify({ apiKey, inputs, attestation, model = P
   const result = JSON.parse(responseText);
   const signed = await verifySignedExchange({ apiKey, model, id: result.id, requestBody, responseText, attestation });
   return { id: result.id, data: result.data ?? [], ...signed };
+}
+
+// ── End-to-end encryption (NEAR model E2EE protocol, version 2) ────────────────────────────────────────────────
+// The message is encrypted on this machine to the Ed25519 key that the model TEE generated and that its Intel TDX
+// quote binds (checked in verifyTee). The gateway and NEAR AI's operators only relay ciphertext; the reply comes back
+// encrypted to a one-time client key that never leaves this process. X25519 ECDH, HKDF-SHA256, XChaCha20-Poly1305;
+// wire format [ephemeral public key 32][nonce 24][ciphertext + tag].
+const E2EE_INFO = 'ed25519_encryption';
+
+export function e2eeEncrypt(plaintext, recipientEd25519PubHex) {
+  const recipient = edwardsToMontgomeryPub(Buffer.from(recipientEd25519PubHex, 'hex'));
+  const ephemeral = x25519.utils.randomPrivateKey();
+  const key = hkdf(sha256Bytes, x25519.getSharedSecret(ephemeral, recipient), undefined, E2EE_INFO, 32);
+  const nonce = randomBytes(24);
+  const ct = xchacha20poly1305(key, nonce).encrypt(Buffer.from(plaintext, 'utf8'));
+  return Buffer.concat([x25519.getPublicKey(ephemeral), nonce, ct]).toString('hex');
+}
+
+export function e2eeDecrypt(dataHex, x25519Secret) {
+  const data = Buffer.from(dataHex, 'hex');
+  const key = hkdf(sha256Bytes, x25519.getSharedSecret(x25519Secret, data.subarray(0, 32)), undefined, E2EE_INFO, 32);
+  return Buffer.from(xchacha20poly1305(key, data.subarray(32, 56)).decrypt(data.subarray(56))).toString('utf8');
+}
+
+/** A one-time client key pair: the public half goes in X-Client-Pub-Key, the X25519 secret decrypts the reply. */
+export function e2eeClientKeys() {
+  const secret = ed25519.utils.randomPrivateKey();
+  return { publicKeyHex: Buffer.from(ed25519.getPublicKey(secret)).toString('hex'), x25519Secret: edwardsToMontgomeryPriv(secret) };
+}
+
+/**
+ * One end-to-end encrypted completion, then its signature check. `attestation` must come from
+ * attestModel(model, key, { signingAlgo: 'ed25519' }) and be fully verified: the key we encrypt to is the one the
+ * quote binds. Returns the decrypted content; the plaintext request and reply exist only in this process.
+ */
+export async function chatE2EE({ apiKey, model, messages, attestation, responseFormat }) {
+  if (!apiKey) throw new Error('NEARAI_CLOUD_API_KEY is not set');
+  if (attestation.signingAlgo !== 'ed25519' || !attestation.verified) throw new Error('E2EE needs a verified ed25519 attestation');
+  if (attestation.e2eeKeys.length !== 1) throw new Error(`E2EE needs exactly one attested model key, got ${attestation.e2eeKeys.length}`);
+  const [modelKey] = attestation.e2eeKeys;
+  const client = e2eeClientKeys();
+  const encrypted = messages.map((m) => ({ ...m, content: e2eeEncrypt(m.content, modelKey) }));
+  const requestBody = JSON.stringify({ model, messages: encrypted, stream: false, ...(responseFormat ? { response_format: responseFormat } : {}) });
+  const r = await ok(await fetch(`${NEARAI_BASE_URL}/v1/chat/completions`, {
+    method: 'POST',
+    headers: {
+      ...headers(apiKey),
+      'content-type': 'application/json',
+      'X-Signing-Algo': 'ed25519',
+      'X-Client-Pub-Key': client.publicKeyHex,
+      'X-Model-Pub-Key': modelKey,
+      'X-Encryption-Version': '2',
+      'x-no-aliasing': 'true',
+    },
+    body: requestBody,
+  }), 'E2EE chat completion');
+  const responseText = await r.text();
+  const completion = JSON.parse(responseText);
+  const wire = completion.choices?.[0]?.message?.content ?? '';
+  const isHex = /^[0-9a-f]+$/i.test(wire) && wire.length > 112;
+  const content = isHex ? e2eeDecrypt(wire, client.x25519Secret) : wire;
+  const signed = await verifySignedExchange({ apiKey, model, id: completion.id, requestBody, responseText, attestation });
+  const e2ee = [
+    { tee: 'e2ee', name: 'request content encrypted to the attested model key', pass: encrypted.every((m) => /^[0-9a-f]+$/.test(m.content)), detail: modelKey.slice(0, 16) + '…' },
+    { tee: 'e2ee', name: 'reply arrived encrypted and opened with our one-time key', pass: isHex, detail: `${wire.length / 2} bytes of ciphertext` },
+  ];
+  return { content, chatId: completion.id, e2ee: { modelKey, clientKey: client.publicKeyHex, requestCiphertextBytes: requestBody.length }, ...signed, checks: [...e2ee, ...signed.checks], verified: signed.verified && e2ee.every((c) => c.pass) };
 }

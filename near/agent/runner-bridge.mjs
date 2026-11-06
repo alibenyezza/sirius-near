@@ -15,6 +15,7 @@ import { Account, KeyPairSigner, actions, teraToGas } from 'near-api-js';
 import { MARKET, EXPLORER, provider, view } from './lib/near.mjs';
 import { sha256 } from './lib/nearai.mjs';
 import { trainLinearRegression } from './lib/train.mjs';
+import { isSealed, open, loadRunnerKey } from './lib/seal.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const EXAMPLES = join(HERE, '..', 'examples');
@@ -27,16 +28,22 @@ export function canonical(value) {
   return JSON.stringify(value);
 }
 
-/** The local copy of a dataset, found by the sha256 recorded in its NFT. */
-export function findDataset(cidHash, dir = EXAMPLES) {
-  for (const name of readdirSync(dir).filter((f) => f.endsWith('.csv'))) {
-    const csv = readFileSync(join(dir, name));
-    if (sha256(csv) === cidHash) return { name, csv };
+/**
+ * The dataset whose sha256 is recorded in its NFT. A `.sealed` file is opened with the runner key (lib/seal.mjs) and
+ * its plaintext only lives in memory for the training; a plain `.csv` is the older, unsealed demo dataset (NFT 4).
+ */
+export function findDataset(cidHash, dir = EXAMPLES, runnerKey = null) {
+  for (const name of readdirSync(dir).filter((f) => f.endsWith('.csv') || f.endsWith('.sealed'))) {
+    const bytes = readFileSync(join(dir, name));
+    if (sha256(bytes) !== cidHash) continue;
+    if (!isSealed(bytes)) return { name, csv: bytes, sealed: false };
+    const key = runnerKey ?? loadRunnerKey();
+    return { name, csv: open(bytes, key.secret), sealed: true, sealKey: key.publicKeyHex };
   }
   return null;
 }
 
-export function buildDelivery({ orderId, order, dataset, csv, runnerId, now = new Date() }) {
+export function buildDelivery({ orderId, order, dataset, csv, runnerId, sealed = false, sealKey = null, now = new Date() }) {
   if (order.profile !== 'linear_regression') throw new Error(`Profile ${order.profile} not supported by the local runner`);
   const model = trainLinearRegression(csv.toString('utf8'), { exclude: ['patient_name', 'email', 'phone', 'postcode'] });
   const modelHash = sha256(canonical(model));
@@ -46,6 +53,8 @@ export function buildDelivery({ orderId, order, dataset, csv, runnerId, now = ne
     orderId: String(orderId),
     tokenId: order.token_id,
     datasetCidHash: dataset.cid_hash,
+    datasetSealed: sealed,
+    ...(sealed ? { sealKey, sealFormat: 'SRSEAL01 X25519-HKDF-SHA256-XChaCha20Poly1305' } : {}),
     profile: order.profile,
     modelHash,
     metrics: model.metrics,
@@ -80,7 +89,7 @@ async function deliver(runner, orderId, order) {
   const dataset = await view('get_dataset', { token_id: order.token_id });
   const local = findDataset(dataset.cid_hash);
   if (!local) return console.log(`order ${orderId}: no local copy of dataset ${order.token_id}, skipped`);
-  const d = buildDelivery({ orderId, order, dataset, csv: local.csv, runnerId: runner.accountId });
+  const d = buildDelivery({ orderId, order, dataset, csv: local.csv, runnerId: runner.accountId, sealed: local.sealed, sealKey: local.sealKey });
   const result = await runner.signAndSendTransaction({
     receiverId: MARKET,
     actions: [actions.functionCall('deliver', { order_id: String(orderId), model_hash: d.modelHash, certificate_hash: d.certificateHash }, teraToGas('30'), 0n)],
@@ -91,7 +100,7 @@ async function deliver(runner, orderId, order) {
   if (result.status?.Failure) return console.log(`order ${orderId}: refused ${JSON.stringify(result.status.Failure).slice(0, 200)} (tx ${tx})`);
   mkdirSync(OUT, { recursive: true });
   writeFileSync(join(OUT, `order-${orderId}.json`), JSON.stringify({ model: d.model, certificate: d.certificate, deliverTx: tx }, null, 2));
-  console.log(`order ${orderId}: delivered, R²=${d.model.metrics.r2.toFixed(3)}, model ${d.modelHash.slice(0, 12)}…, tx ${EXPLORER}${tx}`);
+  console.log(`order ${orderId}: ${local.sealed ? 'sealed dataset opened in memory, ' : ''}delivered, R²=${d.model.metrics.r2.toFixed(3)}, model ${d.modelHash.slice(0, 12)}…, tx ${EXPLORER}${tx}`);
 }
 
 async function main() {

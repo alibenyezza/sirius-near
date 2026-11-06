@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 // Privacy audit of a dataset on NEAR AI Cloud, with the "Verified" panel.
 //
-//   node --env-file=.env privacy-audit.mjs [file.csv] [--model <id>] [--attest-only] [--json] [--token <id> --holder <account>]
+//   node --env-file=.env privacy-audit.mjs [file.csv] [--sealed <file.csv.sealed>] [--model <id>] [--attest-only]
+//        [--no-e2ee] [--no-filter] [--json] [--token <id> --holder <account>]
 //
-// Prints every check (Intel TDX, NVIDIA GPU, key and nonce binding, signed reply), the audit, and the near-cli command
-// that records the audit hash in the dataset NFT. Nothing is written to disk.
+// Prints every check (Intel TDX, debug off, RTMR3 event log, NVIDIA GPU, key and nonce binding, E2EE, signed reply),
+// the audit, and the near-cli command that records the audit hash in the dataset NFT. Nothing is written to disk.
+// By default the sample reaches the model end-to-end encrypted to its attested key (see lib/audit.mjs).
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { runAudit } from './lib/audit.mjs';
-import { attestModel, DEFAULT_MODEL } from './lib/nearai.mjs';
+import { attestModel, DEFAULT_MODEL, sha256 } from './lib/nearai.mjs';
 import { MARKET } from './lib/near.mjs';
 
 const args = process.argv.slice(2);
@@ -16,13 +18,14 @@ const opt = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1
 const file = args.find((a, i) => !a.startsWith('--') && !args[i - 1]?.startsWith('--'))
   ?? fileURLToPath(new URL('../examples/hospital-stays-fictional.csv', import.meta.url));
 const model = opt('--model') ?? DEFAULT_MODEL;
+const e2ee = !args.includes('--no-e2ee');
 
 function panel(checks) {
   for (const c of checks) console.log(`  ${c.pass ? 'PASS' : 'FAIL'}  [${c.tee}] ${c.name}${c.detail ? `  (${String(c.detail).slice(0, 70)})` : ''}`);
 }
 
 if (args.includes('--attest-only')) {
-  const a = await attestModel(model);
+  const a = await attestModel(model, process.env.NEARAI_CLOUD_API_KEY, { signingAlgo: args.includes('--e2ee') ? 'ed25519' : 'ecdsa' });
   if (args.includes('--json')) console.log(JSON.stringify(a, null, 2));
   else {
     console.log(`NEAR AI Cloud attestation of ${a.model}, nonce ${a.nonce}`);
@@ -32,16 +35,23 @@ if (args.includes('--attest-only')) {
   process.exit(a.verified ? 0 : 1);
 }
 
-const r = await runAudit({ csvText: readFileSync(file, 'utf8'), model });
+const sealedFile = opt('--sealed');
+const r = await runAudit({
+  csvText: readFileSync(file, 'utf8'),
+  ...(sealedFile ? { datasetHash: sha256(readFileSync(sealedFile)) } : {}),
+  model,
+  e2ee,
+  filter: !args.includes('--no-filter'),
+});
 if (args.includes('--json')) {
   console.log(JSON.stringify({ ...r, chat: r.chat && { ...r.chat, content: undefined } }, null, 2));
   process.exit(r.verified ? 0 : 1);
 }
-console.log(`Dataset ${file}\n  sha256 ${r.datasetHash}\n`);
-console.log(`Attestation of ${r.attestation.model} with a fresh nonce ${r.attestation.nonce}`);
+console.log(`Dataset ${file}${sealedFile ? `\n  sealed copy ${sealedFile}` : ''}\n  sha256 ${r.datasetHash}${sealedFile ? ' (of the sealed file, as recorded in the NFT)' : ''}\n`);
+console.log(`Attestation of ${r.attestation.model} (${r.attestation.signingAlgo}) with a fresh nonce ${r.attestation.nonce}`);
 panel(r.attestation.checks);
 if (r.chat) {
-  console.log('\nSigned reply');
+  console.log(r.e2ee ? `\nEnd-to-end encrypted exchange: sample encrypted to model key ${r.chat.e2ee.modelKey.slice(0, 16)}…, reply encrypted to our one-time key ${r.chat.e2ee.clientKey.slice(0, 16)}…` : '\nSigned reply');
   panel(r.chat.checks);
 }
 if (!r.audit) {
@@ -52,8 +62,11 @@ console.log(`\nVerdict: ${r.audit.verdict}`);
 for (const p of r.audit.pii_columns) console.log(`  personal data: ${p.column} (${p.kind}) ${p.why}`);
 console.log(`  safe columns: ${(r.audit.safe_columns ?? []).join(', ')}`);
 console.log(`\nPublic card: ${r.audit.public_card?.title}\n  ${r.audit.public_card?.summary}`);
-console.log(`\nSecond detector: ${r.filterAttestation.model} (privacy classify), its own attestation, nonce ${r.filterAttestation.nonce}`);
-panel(r.filterAttestation.checks);
+if (r.filterAttestation) {
+  console.log(`\nSecond detector: ${r.filterAttestation.model} (privacy classify), its own attestation, nonce ${r.filterAttestation.nonce}`);
+  console.log('  transport: TLS ending inside the attested gateway TEE (NEAR AI offers no E2EE on /privacy/classify)');
+  panel(r.filterAttestation.checks);
+} else console.log('\nSecond detector skipped (--no-filter): the whole audit stayed end-to-end encrypted');
 if (r.filter) {
   console.log('\nSigned classify reply');
   panel(r.filter.checks);
@@ -63,7 +76,7 @@ if (r.filter) {
   console.log(`  only the model: ${c.onlyModel.join(', ') || '-'}`);
   console.log(`  only the filter: ${c.onlyFilter.join(', ') || '-'}`);
 }
-console.log(r.verified ? '\nVERIFIED: both detectors ran in attested TEEs and both replies are signed by attested keys' : `\nNOT VERIFIED${r.reason ? `: ${r.reason}` : ''}`);
+console.log(r.verified ? `\nVERIFIED: ${r.filter ? 'both detectors' : 'the model'} ran in attested TEEs, ${r.e2ee ? 'the model saw the sample end-to-end encrypted, ' : ''}every reply is signed by an attested key` : `\nNOT VERIFIED${r.reason ? `: ${r.reason}` : ''}`);
 console.log(`Audit hash ${r.hash}`);
 const token = opt('--token');
 if (token && r.verified) {

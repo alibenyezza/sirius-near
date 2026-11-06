@@ -1,14 +1,25 @@
 # Sirius on NEAR
 
-**Confidential datasets you can own, sell and earn from.** A data provider publishes an encrypted dataset; buyers pay
-for a training run and only ever receive the trained model. On NEAR, each dataset becomes an **NFT that owns a
+**Confidential datasets you can own, sell and earn from.** A data provider seals a dataset to the training runner's
+key and publishes only the sealed file's hash; buyers pay for a training run and only ever receive the trained model. On NEAR, each dataset becomes an **NFT that owns a
 wallet**: the NFT is tied to a keyless vault account that collects every payment for that dataset. Sell the NFT and
 the vault, its balance and the right to withdraw move with it. Before publishing, the dataset is audited for personal
-data by a **private model of NEAR AI Cloud whose TEE we verify ourselves**. Agents can buy training runs **from a
+data by a **private model of NEAR AI Cloud whose TEE we verify ourselves**, and the sample reaches that model
+**end-to-end encrypted to the key its Intel TDX quote binds**: NEAR AI's gateway only relays ciphertext. Agents can buy training runs **from a
 budget a human gave them**, with a key that cannot do anything else.
 
-Built at NEAR HACKATHON (Nov 2026). Tracks: **NFTs That Do Something** (`nfts`), **Privacy & Private AI**
-(`privacy`), **Agent Economy** (`agents`), **AI Security & Defense** (`security`), **Open Innovation** (`open`).
+Built at NEAR HACKATHON (Nov 2026). Tracks: **Privacy & Private AI** (`privacy`), **NFTs That Do Something**
+(`nfts`), **AI Security & Defense** (`security`).
+
+## Check it in 60 seconds (no wallet, no key)
+
+| Do | See |
+|---|---|
+| `cd near/agent && npm ci && node privacy-audit.mjs --attest-only --e2ee` | about 30 `PASS` lines for the model TEE and the gateway TEE: Intel TDX quote (dcap-qvl), debug off, RTMR3 event-log replay, MRCONFIGID, NVIDIA GPUs, and the **Ed25519 E2EE key bound in the quote with your nonce**; then `VERIFIED` |
+| `node seal.mjs check ../examples/hospital-stays-fictional.csv.sealed` | `sealed format: yes`, its sha256 `bc5dfed2…f4026c`, and `it cannot be opened here`: only the runner key opens it |
+| `near contract call-function as-read-only sirius-ali-market.testnet get_dataset json-args '{"token_id":"6"}' network-config testnet now` | `cid_hash` = that same sha256, and `privacy_audit` = the hash of the end-to-end encrypted audit ([log](near/scripts/sealed-demo.log)) |
+| `near account list-keys ds-6.sirius-ali-market.testnet network-config testnet now` | no keys: nobody can sign for the NFT's vault |
+| `npm test` | 41 tests pass (some read testnet live) |
 
 ![NFT page: vault, earnings, holders, history](near/docs/nft-page.png)
 
@@ -25,8 +36,8 @@ Built at NEAR HACKATHON (Nov 2026). Tracks: **NFTs That Do Something** (`nfts`),
 | Track | What it does | Where |
 |---|---|---|
 | `nfts` | Dataset NFT (NEP-171/177/178/181/199). Each one has a vault account `ds-<id>.<market>` with **no access key**, running immutable global code (NEP-591, by hash), that obeys the market only; the market pays only the current holder. Withdrawals lock the token, revoke listings, and every sale is in the NFT's history. | `near/contracts`, [`near/THREAT-MODEL.md`](near/THREAT-MODEL.md) |
-| `privacy` | Privacy audit of a dataset sample on a private TEE model of NEAR AI Cloud. Before anything is sent, a fresh nonce attestation is verified **here**: Intel TDX quote signed by Intel (dcap-qvl), signing key and nonce bound in the TDX report data, compose manifest measured in MRCONFIGID, NVIDIA GPU tokens verified with NVIDIA's keys and the same nonce. The reply's ECDSA signature must come from the attested key. A second, independent detector runs in its own attested TEE: NEAR AI's privacy filter (`openai/privacy-filter`, `/v1/privacy/classify`) labels personal data column by column, its reply is signed by the attested gateway, and the two verdicts are compared. The audit hash, which binds both signed exchanges, goes into the NFT. Nothing is stored. | `near/agent/lib/nearai.mjs`, `near/agent/privacy-audit.mjs`, `/verified` page |
-| `agents` | A human funds an agent's budget in the market (`fund_agent`). The agent pays training runs with a **function-call key** limited to `order_with_budget` on the market (and a second agent with a **gas key**, NEP-611, which holds its own refillable gas and cannot lock itself out): it cannot attach deposits, send NEAR or call anything else, and the contract refuses any price above the agent's offer, the per-order limit or what is left. Exposed as an MCP server; every purchase returns a receipt. | `near/contracts`, `near/agent/mcp-server.mjs` |
+| `privacy` | **Sealed at rest:** the provider seals the CSV to the runner's X25519 key (XChaCha20-Poly1305, `near/agent/seal.mjs`); the NFT records sha256 of the sealed file, and the runner opens it in memory only. **Audited end-to-end encrypted:** a sample is audited for personal data on a private TEE model of NEAR AI Cloud. Before anything is sent, a fresh nonce attestation is verified **here**: Intel TDX quote signed by Intel (dcap-qvl), debug mode off, signing key and nonce bound in the TDX report data, compose manifest measured in MRCONFIGID, RTMR3 replayed from the event log, NVIDIA GPU tokens verified with NVIDIA's keys and the same nonce. The sample is then encrypted to the model's attested Ed25519 key (NEAR AI E2EE v2: X25519, HKDF-SHA256, XChaCha20-Poly1305) and the reply comes back encrypted to a one-time key; the model TEE's Ed25519 signature over both hashes must verify under the attested key. A second, independent detector runs in its own attested TEE: NEAR AI's privacy filter (`openai/privacy-filter`, `/v1/privacy/classify`) labels personal data column by column, its reply is signed by the attested gateway, and the two verdicts are compared. The audit hash, which binds both signed exchanges, goes into the NFT. Nothing is stored. | `near/agent/lib/nearai.mjs`, `near/agent/privacy-audit.mjs`, `/verified` page |
+| Agent budget | A human funds an agent's budget in the market (`fund_agent`). The agent pays training runs with a **function-call key** limited to `order_with_budget` on the market (and a second agent with a **gas key**, NEP-611, which holds its own refillable gas and cannot lock itself out): it cannot attach deposits, send NEAR or call anything else, and the contract refuses any price above the agent's offer, the per-order limit or what is left. Exposed as an MCP server; every purchase returns a receipt. | `near/contracts`, `near/agent/mcp-server.mjs` |
 | `security` | Before the agent pays, a **counterparty check** returns allow, warn or block with its reasons: the receiving vault must be `ds-<id>.<market>`, keyless, and run the market's vault code (read from the chain); the holder and publisher must not be on the shared blocklist (reports need evidence); price, offer and training profile must fit the policy the human wrote (`policy.json`); a missing privacy audit, orders to agents hidden in the dataset text, a sale or a price change in the last hour are warnings. A block is final; a warning needs a human at a terminal (`approve.mjs`), once. An attack demo on testnet shows a prompt-injected agent stopped by the check, the contract and the key. | `near/agent/lib/guard.mjs`, `near/agent/attack-demo.mjs`, [`near/scripts/attack-demo.log`](near/scripts/attack-demo.log) |
 
 ## Live on testnet
@@ -61,6 +72,24 @@ The full journey on token `4` (`near/scripts/demo-testnet.sh`), every step a rea
 | Privacy audit on NEAR AI Cloud, first version (one detector, `Qwen/Qwen3.8-27B`) | (off-chain, TEE) | `VERIFIED`; the check on NFT 4 goes from `warn` to `allow` once Bob records it | `92NsvFG8qqHd9vah3m5T72ceLoLXe6E7Y6HG1P6b3Qp8` |
 | Privacy audit with **two independent detectors**, each in its own attested TEE: the audit model and NEAR AI's `openai/privacy-filter` (`POST /v1/privacy/classify`). 89 checks pass: 2 × 40 attestation checks, 5 on the model's signed reply, 4 on the filter's reply signed by the attested gateway. Both flag `patient_name`, `email`, `phone`, `postcode`; neither flags a column the other misses ([log](near/scripts/privacy-audit.log)) | (off-chain, TEE) | `VERIFIED`, audit hash `1d2843ba…45a56b` binds both exchanges | |
 | Bob records the new audit hash, model and nonce in the NFT (`set_privacy_audit`) | bob | | `H6s56FBkSDMdmcjgEMv4sDiyrEvnQ8WyUvrTovCAUZdz` |
+
+### Sealed dataset, end-to-end encrypted audit (NFT 6)
+
+`near/scripts/sealed-demo.sh`, every step real ([log](near/scripts/sealed-demo.log)):
+
+| Step | Result | Transaction |
+|---|---|---|
+| Alice seals the CSV to the runner's public key ([`near/agent/runner-seal.pub`](near/agent/runner-seal.pub)) | `hospital-stays-fictional.csv.sealed`, 19 462 bytes, sha256 `bc5dfed2…f4026c` | (local) |
+| Alice publishes NFT `6` with `cid_hash` = that sha256: vault `ds-6.sirius-ali-market.testnet` created, keyless | token `6` | `8cTsAG1Dp8MtjUGoALK6KvnLkFTuD6NhaSP2mzJw7TVZ` |
+| Audit on NEAR AI Cloud: attestation with `signing_algo=ed25519`, sample encrypted to the model key `89154a43…cb2d93` that the TDX quote binds, reply encrypted to a one-time client key, both hashes signed by the model TEE (`provider_tee`, Ed25519). The privacy filter runs too, over TLS into the attested gateway: NEAR AI offers no E2EE on `/privacy/classify` (we tried, it classifies the ciphertext). Both flag `patient_name`, `email`, `phone`, `postcode` | `VERIFIED`, audit hash `5e125fe2…53c633` | (off-chain, TEE) |
+| Alice records the audit hash, model and nonce in NFT 6 | | `FiFwd8f9zj3qvemTD5gGTMteJmy2wcz2Rvnng5LPrt1D` |
+| Carol's agent checks NFT 6 and pays 0.5 NEAR from its budget over MCP (an offer of 0.25 is refused first) | order `11` | `DExsMMkmqJMbR66sUgep9XZnzwWsFddE3RKZm4zTd7As` |
+| The runner finds the sealed file by the hash in the NFT, opens it in memory, trains (R² 0.840) and delivers; the certificate says `"datasetSealed": true` and names the seal key | 0.45 NEAR to the vault | `5Bt2Se6kCkrnvMiCrQTkNGSzgRQSViLEHuBS1uEjdGBv` |
+
+Who can read the data: the provider (its own file); NEAR AI's model TEE (the 20-row sample, decrypted inside the
+enclave whose key we checked); the privacy filter and gateway TEEs (the same sample, over TLS, attested); the runner
+(the full file, in memory). Nobody else: the sealed file can be mirrored anywhere, and the gateway only relays
+ciphertext to the model. The plain CSV ships in `near/examples` only so judges can run the audit; it is fictional.
 
 ### Attack demo: a prompt-injected agent
 
@@ -123,18 +152,20 @@ Full log: [`near/scripts/gas-key-demo.log`](near/scripts/gas-key-demo.log).
 Requirements: Node 22, and for the contracts Rust with [`cargo-near`](https://github.com/near/cargo-near) and
 [`near-cli-rs`](https://github.com/near/near-cli-rs).
 
-1. **See the TEE proof.** `cd near/agent && npm ci && node privacy-audit.mjs --attest-only`. You see about 20 to 40
-   `PASS` lines (Intel TDX, NVIDIA GPUs, key and nonce binding, for the model and the gateway) and
+1. **See the TEE proof.** `cd near/agent && npm ci && node privacy-audit.mjs --attest-only` (ECDSA identity) or
+   `... --attest-only --e2ee` (the Ed25519 key used for end-to-end encryption). You see 30 to 50 `PASS` lines (Intel
+   TDX, debug off, RTMR3, NVIDIA GPUs, key and nonce binding, for the model and the gateway) and
    `VERIFIED: every check passed`. No API key is needed for this step.
 2. **Open the pages.** `node web.mjs`, then <http://localhost:4320>. You see the dataset NFTs read live from testnet.
    Open `/dataset/4`: the vault, its live balance, Alice → Bob in the holders, the history above. Open `/verified`:
    a new attestation with a new nonce on every load.
 3. **Try the holder page.** Open `/holder/4` and sign with a NEAR testnet wallet. Unless you are
    `sirius-ali-bob.testnet`, you see `Refused · <your account> does not hold NFT 4`.
-4. **Run the tests.** `npm test` in `near/agent` (35 tests, some read testnet live) and `cargo test` in
+4. **Run the tests.** `npm test` in `near/agent` (41 tests, some read testnet live) and `cargo test` in
    `near/contracts` (36 market tests, 6 vault tests). Look for `sale_in_the_middle_of_a_payout_pays_the_buyer`,
    `cannot_sell_while_withdrawal_in_flight`, `withdrawal_revokes_listing`, `agent_walks_away_above_its_offer`,
-   `live: a replayed report (other nonce) fails the binding checks`, `buy_training_run never signs on a block or an
+   `live: a replayed report (other nonce) fails the binding checks`, `a sealed dataset opens with the runner key and
+   with no other key`, `E2EE v2: a message encrypted to a model Ed25519 key opens only with that key`, `buy_training_run never signs on a block or an
    unapproved warning`.
 5. **Use it from an agent.** Add the MCP server to any MCP client:
    `{"mcpServers":{"sirius-near":{"command":"node","args":["near/agent/mcp-server.mjs"]}}}`. Tools: `search_datasets`,
@@ -145,9 +176,11 @@ Requirements: Node 22, and for the contracts Rust with [`cargo-near`](https://gi
    `tokenId: "4"`: `allow`, since its privacy audit is recorded. With an agent account,
    `node --env-file=.env attack-demo.mjs 5 sirius-ali-mallory.testnet` replays the attack demo.
 7. **Run the privacy audit itself.** Put a NEAR AI Cloud key in `near/agent/.env` (`NEARAI_CLOUD_API_KEY=`, from
-   <https://cloud.near.ai>), then `node --env-file=.env privacy-audit.mjs ../examples/hospital-stays-fictional.csv --token 4 --holder <holder>`.
-   You see two attestations (the audit model and the privacy filter), the two signed-reply panels, the columns each
-   detector flags and where they agree, and the `near` command that records the audit hash in the NFT.
+   <https://cloud.near.ai>), then `node --env-file=.env privacy-audit.mjs ../examples/hospital-stays-fictional.csv --sealed ../examples/hospital-stays-fictional.csv.sealed --token 6 --holder <holder>`.
+   You see two attestations (the audit model and the privacy filter), the end-to-end encrypted exchange and its
+   signature panel, the filter's signed reply, the columns each detector flags and where they agree, and the `near`
+   command that records the audit hash in the NFT. `--no-filter` keeps the whole audit end-to-end encrypted;
+   `--no-e2ee` sends the sample in clear over TLS into the attested TEEs, as the first version did.
 8. **Replay the whole journey on your own accounts.** Deploy as in [`near/DEPLOY.md`](near/DEPLOY.md), fill
    `near/agent/.env`, then `MARKET=... OWNER=... ALICE=... BOB=... CAROL=... RUNNER=... bash near/scripts/demo-testnet.sh`.
 
@@ -155,7 +188,8 @@ Requirements: Node 22, and for the contracts Rust with [`cargo-near`](https://gi
 
 | Real | Simulated or not done yet |
 |---|---|
-| Every contract call above, on testnet | **The TEE of the training runner.** The runner bridge trains here (least squares, `near/agent/lib/train.mjs`) and its certificate says `"mode": "local-simulated", "tee": null`. |
+| Every contract call above, on testnet | **The TEE of the training runner.** The runner bridge trains here (least squares, `near/agent/lib/train.mjs`) and its certificate says `"mode": "local-simulated", "tee": null`. Its seal key is generated on the runner's machine, not inside an enclave, so "only the runner can open it" means only that machine. |
+| The sealing of NFT 6's dataset and its end-to-end encrypted audit on NEAR AI Cloud (the model key is checked against the TDX quote before anything is encrypted) | NFT 4 (the first demo) points to the plain CSV, from before the sealing existed. |
 | The NEAR AI Cloud attestation checks (Intel, NVIDIA, bindings), run on every call, and the privacy audit of token `4`: two detectors (a private TEE model and the privacy filter), each attested, both replies signed, hash recorded on testnet ([log](near/scripts/privacy-audit.log)) | **The audited file is the full fictional CSV**, not a sample cut from a real dataset. The audit hash is checked by its holder's call, not by the contract: `set_privacy_audit` stores what the holder sends. |
 | The model trained by the bridge and its hash | **The runner's TDX quote on-chain.** `register_runner` stores the hash of a quote checked off-chain; the contract does not verify quotes. |
 | The NEP-413 holder gate, with near-cli signatures | The dataset is fictional (`near/examples/hospital-stays-fictional.csv`): every name, e-mail and phone is invented. |
@@ -166,7 +200,9 @@ Known limits are listed at the end of [`near/THREAT-MODEL.md`](near/THREAT-MODEL
 
 Sirius existed before the hackathon on another chain. The first commit of this repository is a copy of it, tagged
 [`pre-hackathon`](../../tree/pre-hackathon); that code has since been removed from the tree. **Everything in this
-repository (`near/`) was built during the hackathon:** [`pre-hackathon...main`](../../compare/pre-hackathon...main).
+repository (`near/`) was built during the hackathon:** the `pre-hackathon` tree has no `near/` folder, so
+[`pre-hackathon...main`](../../compare/pre-hackathon...main) shows every NEAR file as new (and the old app as
+deleted, in commit `e5de130`).
 
 Non-NEAR services used: NEAR AI Cloud's attestation relies on Intel (PCCS collateral) and NVIDIA NRAS.
 
@@ -175,9 +211,10 @@ Non-NEAR services used: NEAR AI Cloud's attestation relies on Intel (PCCS collat
 - Contracts: `near-sdk` 5.30.1, `near-contract-standards` 5.30.1. Built with `cargo-near` 0.22.0, deployed with
   `near-cli-rs` 0.31.1 (nearcore 2.14, testnet protocol 88).
 - Agent, web and verification: `near-api-js` 7.4.0, `@modelcontextprotocol/sdk` 1.32.2, `@phala/dcap-qvl` 0.7.0
-  (Intel quote verification), `jose` 6 (NVIDIA tokens), `viem` 2 (ECDSA recovery), `zod` 4; `@hot-labs/near-connect`
-  0.12.0 in the browser. The verification flow follows `near-examples/nearai-cloud-verification-example` and the
-  `near-ai-cloud` agent skill.
+  (Intel quote verification), `jose` 6 (NVIDIA tokens), `viem` 2 (ECDSA recovery), `@noble/curves`, `@noble/ciphers`, `@noble/hashes` 1
+  (Ed25519, X25519, XChaCha20-Poly1305, HKDF for E2EE and sealing), `zod` 4; `@hot-labs/near-connect`
+  0.12.0 in the browser. The verification flow follows `near-examples/nearai-cloud-verification-example`, the
+  `near-ai-cloud` agent skill and the NEAR AI docs (quote, nonce and signer bindings; E2EE chat completions).
 - Code written with the help of an AI coding agent (Claude Code), reviewed and run by the author. Every testnet
   transaction listed here was sent and checked.
 

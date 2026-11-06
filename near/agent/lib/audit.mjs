@@ -1,6 +1,6 @@
 // Privacy audit of a dataset sample on a private (TEE) model of NEAR AI Cloud, with its proof.
 // Pure functions plus one network call each to NEAR AI Cloud and NVIDIA. Nothing is stored.
-import { attestModel, chatAndVerify, classifyAndVerify, DEFAULT_MODEL, PRIVACY_FILTER_MODEL, sha256 } from './nearai.mjs';
+import { attestModel, chatAndVerify, chatE2EE, classifyAndVerify, DEFAULT_MODEL, PRIVACY_FILTER_MODEL, sha256 } from './nearai.mjs';
 
 export const SAMPLE_ROWS = 20;
 
@@ -66,6 +66,7 @@ export function auditHash({ datasetHash, attestation, chat, filter }) {
     requestHash: chat?.requestHash ?? null,
     responseHash: chat?.responseHash ?? null,
     signature: chat?.signature?.signature ?? null,
+    ...(chat?.e2ee ? { e2eeModelKey: chat.e2ee.modelKey, signingAlgo: attestation.signingAlgo } : {}),
     ...(filter ? {
       filterModel: filter.attestation.model,
       filterNonce: filter.attestation.nonce,
@@ -79,17 +80,22 @@ export function auditHash({ datasetHash, attestation, chat, filter }) {
 
 /**
  * Runs the audit. Without an API key only the attestation runs, and `audit` is null: nothing is made up.
+ *
+ * e2ee (default true): the sample goes to the model end-to-end encrypted to the Ed25519 key its TDX quote binds, so
+ * the gateway relays ciphertext only, and the model TEE signs the exchange. The privacy filter has no E2EE on
+ * /privacy/classify (it classifies the ciphertext itself), so its sample travels over TLS that ends inside the attested
+ * gateway TEE; `filter: false` skips it and keeps the whole audit end-to-end encrypted.
+ * `datasetHash` is what the NFT records: sha256 of the sealed file when there is one, else of the CSV.
  */
-export async function runAudit({ csvText, model = DEFAULT_MODEL, apiKey = process.env.NEARAI_CLOUD_API_KEY, rows = SAMPLE_ROWS }) {
-  const datasetHash = sha256(csvText);
-  const attestation = await attestModel(model, apiKey);
+export async function runAudit({ csvText, datasetHash = sha256(csvText), model = DEFAULT_MODEL, apiKey = process.env.NEARAI_CLOUD_API_KEY, rows = SAMPLE_ROWS, e2ee = true, filter: useFilter = true }) {
+  const attestation = await attestModel(model, apiKey, { signingAlgo: e2ee ? 'ed25519' : 'ecdsa' });
   if (!apiKey) {
     return { datasetHash, attestation, chat: null, audit: null, verified: false, reason: 'NEARAI_CLOUD_API_KEY not set: attestation only, no audit run', hash: null };
   }
   if (!attestation.verified) {
     return { datasetHash, attestation, chat: null, audit: null, verified: false, reason: 'attestation failed: the sample was not sent', hash: null };
   }
-  const chat = await chatAndVerify({
+  const chat = await (e2ee ? chatE2EE : chatAndVerify)({
     apiKey,
     model,
     attestation,
@@ -101,6 +107,9 @@ export async function runAudit({ csvText, model = DEFAULT_MODEL, apiKey = proces
   const audit = parseAudit(chat.content);
 
   // second, independent detector: the privacy filter, in its own attested TEE, sees the same sample column by column
+  if (!useFilter) {
+    return { datasetHash, attestation, chat, audit, filter: null, filterAttestation: null, e2ee, verified: attestation.verified && chat.verified, reason: null, hash: auditHash({ datasetHash, attestation, chat, filter: null }) };
+  }
   const filterAttestation = await attestModel(PRIVACY_FILTER_MODEL, apiKey);
   let filter = null;
   if (filterAttestation.verified) {
@@ -110,5 +119,5 @@ export async function runAudit({ csvText, model = DEFAULT_MODEL, apiKey = proces
     filter = { ...classified, attestation: filterAttestation, flags, comparison: compareDetectors(audit.pii_columns, flags) };
   }
   const verified = attestation.verified && chat.verified && Boolean(filter?.verified);
-  return { datasetHash, attestation, chat, audit, filter, filterAttestation, verified, reason: filter ? null : 'privacy filter attestation failed: the sample was not sent to it', hash: auditHash({ datasetHash, attestation, chat, filter }) };
+  return { datasetHash, attestation, chat, audit, filter, filterAttestation, e2ee, verified, reason: filter ? null : 'privacy filter attestation failed: the sample was not sent to it', hash: auditHash({ datasetHash, attestation, chat, filter }) };
 }
