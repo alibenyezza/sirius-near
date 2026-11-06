@@ -602,7 +602,7 @@ impl NonFungibleTokenCore for Market {
     }
 
     fn nft_token(&self, token_id: TokenId) -> Option<Token> {
-        self.tokens.nft_token(token_id)
+        self.tokens.nft_token(token_id).map(|t| self.live(t))
     }
 }
 
@@ -649,7 +649,7 @@ impl NonFungibleTokenEnumeration for Market {
     }
 
     fn nft_tokens(&self, from_index: Option<U128>, limit: Option<u64>) -> Vec<Token> {
-        self.tokens.nft_tokens(from_index, limit)
+        self.tokens.nft_tokens(from_index, limit).into_iter().map(|t| self.live(t)).collect()
     }
 
     fn nft_supply_for_owner(&self, account_id: AccountId) -> U128 {
@@ -657,7 +657,7 @@ impl NonFungibleTokenEnumeration for Market {
     }
 
     fn nft_tokens_for_owner(&self, account_id: AccountId, from_index: Option<U128>, limit: Option<u64>) -> Vec<Token> {
-        self.tokens.nft_tokens_for_owner(account_id, from_index, limit)
+        self.tokens.nft_tokens_for_owner(account_id, from_index, limit).into_iter().map(|t| self.live(t)).collect()
     }
 }
 
@@ -724,6 +724,50 @@ impl Market {
         self.datasets.get_mut(token_id).unwrap_or_else(|| env::panic_str("Unknown dataset"))
     }
 
+    /// Dynamic NFT: the card is drawn from the contract state on every read, so a wallet always shows what the
+    /// vault has earned, how much is still in it, how many sales it went through and whether its privacy audit is
+    /// recorded. Nothing is stored: `media` is an SVG data URL built here, `extra` the same figures as JSON.
+    fn live(&self, mut token: Token) -> Token {
+        let Some(d) = self.datasets.get(&token.token_id) else { return token };
+        let history = self.history.get(&token.token_id).map(|h| h.as_slice()).unwrap_or(&[]);
+        let sales = history.iter().filter(|e| matches!(e.event, Event::Transferred { .. })).count();
+        let runs = history.iter().filter(|e| matches!(e.event, Event::Earned { .. })).count();
+        let in_vault = d.earned.0.saturating_sub(d.withdrawn.0);
+        let near = |y: u128| format!("{}.{:03}", y / 10u128.pow(24), (y % 10u128.pow(24)) / 10u128.pow(21));
+        let owner = token.owner_id.to_string();
+        let mut meta = token.metadata.take().unwrap_or_else(|| TokenMetadata {
+            title: None, description: None, media: None, media_hash: None, copies: None, issued_at: None,
+            expires_at: None, starts_at: None, updated_at: None, extra: None, reference: None, reference_hash: None,
+        });
+        let title = esc(meta.title.as_deref().unwrap_or("Sirius dataset"));
+        let (badge, color) = if d.privacy_audit.is_some() { ("PRIVACY AUDIT RECORDED", "#3ddc97") } else { ("NO PRIVACY AUDIT", "#f5a524") };
+        let svg = format!(
+            "<svg xmlns='http://www.w3.org/2000/svg' width='400' height='400' viewBox='0 0 400 400'><rect width='400' height='400' fill='#0b0f1a'/>\
+<text x='24' y='44' fill='#8aa0c8' font-family='monospace' font-size='14'>SIRIUS DATASET #{id}</text>\
+<text x='24' y='80' fill='#fff' font-family='sans-serif' font-size='20'>{title}</text>\
+<text x='24' y='140' fill='#8aa0c8' font-family='monospace' font-size='13'>EARNED</text>\
+<text x='24' y='170' fill='#fff' font-family='monospace' font-size='28'>{earned} NEAR</text>\
+<text x='24' y='210' fill='#8aa0c8' font-family='monospace' font-size='13'>IN THE VAULT</text>\
+<text x='24' y='240' fill='#fff' font-family='monospace' font-size='28'>{in_vault} NEAR</text>\
+<text x='24' y='282' fill='#8aa0c8' font-family='monospace' font-size='13'>{runs} TRAINING RUN{rs} · {sales} SALE{ss}</text>\
+<text x='24' y='306' fill='#8aa0c8' font-family='monospace' font-size='12'>VAULT {vault}</text>\
+<rect x='24' y='326' width='352' height='44' rx='8' fill='none' stroke='{color}'/>\
+<text x='40' y='354' fill='{color}' font-family='monospace' font-size='15'>{badge}</text></svg>",
+            id = esc(&token.token_id), title = title, earned = near(d.earned.0), in_vault = near(in_vault),
+            runs = runs, sales = sales, rs = if runs == 1 { "" } else { "S" }, ss = if sales == 1 { "" } else { "S" }, vault = esc(d.vault.as_str()), color = color, badge = badge,
+        );
+        use near_sdk::base64::Engine;
+        meta.media = Some(format!("data:image/svg+xml;base64,{}", near_sdk::base64::engine::general_purpose::STANDARD.encode(svg)));
+        meta.media_hash = None;
+        meta.extra = Some(near_sdk::serde_json::json!({
+            "vault": d.vault, "holder": owner, "earned": d.earned, "withdrawn": d.withdrawn, "in_vault": U128(in_vault),
+            "training_runs": runs, "sales": sales, "price": d.price,
+            "privacy_audit": d.privacy_audit.as_ref().map(|a| &a.report_hash), "cid_hash": d.cid_hash,
+        }).to_string());
+        token.metadata = Some(meta);
+        token
+    }
+
     fn push_history(&mut self, token_id: &TokenId, event: Event) {
         let entry = HistoryEntry { at_ms: U64(env::block_timestamp_ms()), event };
         let list = self.history.entry(token_id.clone()).or_default();
@@ -736,3 +780,15 @@ impl Market {
 
 #[cfg(test)]
 mod tests;
+
+/// Escapes text for the SVG card (titles are chosen by publishers).
+fn esc(s: &str) -> String {
+    s.chars().take(60).map(|c| match c {
+        '<' => "&lt;".to_string(),
+        '>' => "&gt;".to_string(),
+        '&' => "&amp;".to_string(),
+        '\'' => "&apos;".to_string(),
+        '"' => "&quot;".to_string(),
+        c => c.to_string(),
+    }).collect()
+}

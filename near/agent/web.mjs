@@ -11,10 +11,10 @@
 //   /verified         "Verified" panel: attests the NEAR AI Cloud model with a fresh nonce, every check listed
 // Nothing is stored: no database, no session, no log of what a visitor sends.
 import { createServer } from 'node:http';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { checkHolder, issueChallenge } from './lib/gate.mjs';
 import { allOrders, getDataset, listDatasets, MARKET, view, yoctoToNear } from './lib/near.mjs';
-import { attestModel, DEFAULT_MODEL } from './lib/nearai.mjs';
+import { attestModel, DEFAULT_MODEL, sha256 } from './lib/nearai.mjs';
 import { decide, gatherSignals, loadBlocklist, loadPolicy } from './lib/guard.mjs';
 
 const PORT = Number(process.env.PORT || 4320);
@@ -77,6 +77,16 @@ async function home() {
 <div class="grid">${cards || '<p class="k">No dataset yet.</p>'}</div>`);
 }
 
+const EXAMPLES = new URL('../examples/', import.meta.url);
+const RUNNER_SEAL_PUB = (() => { try { return readFileSync(new URL('./runner-seal.pub', import.meta.url), 'utf8').trim(); } catch { return ''; } })();
+/** The sealed file in near/examples whose sha256 is the NFT's cid_hash, if any. */
+function sealedCopy(cidHash) {
+  for (const name of readdirSync(EXAMPLES).filter((f) => f.endsWith('.sealed'))) {
+    if (sha256(readFileSync(new URL(name, EXAMPLES))) === cidHash) return { name, key: RUNNER_SEAL_PUB };
+  }
+  return null;
+}
+
 async function dataset(id) {
   const d = await getDataset(id);
   if (!d) return null;
@@ -84,7 +94,11 @@ async function dataset(id) {
     view('get_history', { token_id: id }), view('get_holders', { token_id: id }),
     view('available', {}, d.vault).catch(() => '0'), allOrders(),
   ]);
-  const raw = await view('get_dataset', { token_id: id });
+  const [raw, token] = await Promise.all([view('get_dataset', { token_id: id }), view('nft_token', { token_id: id })]);
+  // the contract draws the card on every read (dynamic NFT); only an SVG data URL is shown, inside <img> (no script)
+  const media = token?.metadata?.media ?? '';
+  const cardImg = media.startsWith('data:image/svg+xml;base64,') ? `<img src="${esc(media)}" alt="NFT card" width="260" height="260" style="border-radius:18px;display:block">` : '';
+  const sealedFile = sealedCopy(raw.cid_hash);
   const check = await gatherSignals(id).then((sig) => decide(sig, loadPolicy(), loadBlocklist())).catch(() => null);
   const tone = { allow: ['verified', 'pass', 'Allow'], warn: ['warned', 'warn', 'Warn: a human approves'], block: ['notverified', 'fail', 'Block'] };
   const guardCard = check ? `<h2>Before an agent pays</h2><div class="card ${tone[check.verdict][0]}"><div class="big ${tone[check.verdict][1]}">${tone[check.verdict][2]}</div>
@@ -92,7 +106,7 @@ async function dataset(id) {
 ${check.reasons.length ? `<table style="margin-top:12px">${check.reasons.map((r) => `<tr><td class="${r.level === 'block' ? 'fail' : 'warn'}">${esc(r.level)}</td><td>${esc(r.check)}</td><td>${esc(r.detail)}</td></tr>`).join('')}</table>` : '<div class="note">vault keyless and on the market vault code, nobody reported, price within the policy, audit recorded</div>'}</div>` : '';
   const mine = orders.filter((o) => o.token_id === id);
   const audit = d.privacyAudit
-    ? `<div class="card verified"><div class="k">privacy audit on NEAR AI Cloud</div><div class="mono">${esc(d.privacyAudit.report_hash)}</div><div class="note">model ${esc(d.privacyAudit.model)} · nonce ${esc(d.privacyAudit.nonce.slice(0, 16))}…</div></div>`
+    ? `<div class="card verified"><div class="k">privacy audit on NEAR AI Cloud</div><div class="mono" style="word-break:break-all">${esc(d.privacyAudit.report_hash)}</div><div class="note">model ${esc(d.privacyAudit.model)} · nonce ${esc(d.privacyAudit.nonce.slice(0, 16))}…</div></div>`
     : `<div class="card"><div class="k">privacy audit</div>not recorded yet · <a href="/verified">see the TEE proof</a></div>`;
   return page(d.title, `<p class="k"><a href="/">Datasets</a> / #${esc(id)}</p><h1>${esc(d.title)}</h1><p class="lead">${esc(d.description)}</p>
 <div class="stats">
@@ -100,6 +114,12 @@ ${check.reasons.length ? `<table style="margin-top:12px">${check.reasons.map((r)
 <div class="card"><div class="k">vault (no access key)</div>${account(d.vault)}<div class="big" style="margin-top:6px">${near(available)}</div><div class="k">withdrawable now</div></div>
 <div class="card"><div class="k">earned / withdrawn</div><div class="big">${esc(d.earnedNear)} <span class="unit">/ ${esc(yoctoToNear(raw.withdrawn))} NEAR</span></div><div class="k">price per run ${near(d.priceYocto)} · ${esc(d.profile)}</div></div>
 ${audit}</div>
+<h2>The NFT, as a wallet sees it</h2>
+<div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start">${cardImg}
+<div class="card" style="flex:1;min-width:260px"><div class="k">dynamic NFT</div>The card is drawn by the contract each time <span class="mono">nft_token</span> is read: earnings, what is still in the vault, runs, sales and the audit badge change with the chain, with no metadata update.
+<div class="k" style="margin-top:14px">data at rest</div>${sealedFile
+    ? `<span class="pass">sealed</span> to the runner key <span class="mono">${esc(sealedFile.key.slice(0, 16))}…</span>: the NFT records sha256 of <span class="mono">${esc(sealedFile.name)}</span>, which only the runner can open`
+    : 'plain CSV hash (the first demo, published before sealing existed)'}</div></div>
 ${guardCard}
 <h2>Holders</h2><p>${holders.map(account).join(' → ')}</p>
 <h2>History</h2><table><tr><th>When</th><th>Event</th><th>Detail</th></tr>${history.map(eventRow).join('')}</table>
@@ -142,13 +162,15 @@ go.onclick = async () => {
 }
 
 async function verifiedPage() {
-  const a = await attestModel(DEFAULT_MODEL);
+  // ed25519: the identity the quote binds is the key the audit encrypts the sample to (end-to-end encryption)
+  const a = await attestModel(DEFAULT_MODEL, process.env.NEARAI_CLOUD_API_KEY, { signingAlgo: 'ed25519' });
   const rows = a.checks.map((c) => `<tr><td class="${c.pass ? 'pass' : 'fail'}">${c.pass ? 'PASS' : 'FAIL'}</td><td>${esc(c.tee)}</td><td>${esc(c.name)}</td><td class="mono">${esc(String(c.detail ?? '').slice(0, 48))}</td></tr>`).join('');
   return page('Verified', `<h1>Verified private AI</h1>
 <p class="lead">The privacy audit of a dataset runs on <span class="mono">${esc(a.model)}</span>, a private model of NEAR AI Cloud. This page asked for its attestation just now with a fresh random nonce and checked it here, against Intel and NVIDIA.</p>
 <div class="card ${a.verified ? 'verified' : 'notverified'}"><div class="big ${a.verified ? 'pass' : 'fail'}">${a.verified ? 'Verified' : 'Not verified'}</div>
 <div class="k">${a.checks.filter((c) => c.pass).length} of ${a.checks.length} checks passed · nonce <span class="mono">${esc(a.nonce)}</span> · ${esc(a.checkedAt)}</div>
-<div class="note">signing key of the model TEE ${esc(a.signingAddresses.modelTee.join(', '))} · gateway ${esc(a.signingAddresses.gateway.join(', '))}</div></div>
+<div class="note">end-to-end encryption key of the model TEE (Ed25519, bound in its Intel TDX quote with this nonce) <span class="mono">${esc(a.e2eeKeys.join(', '))}</span> · gateway ${esc(a.signingAddresses.gateway.join(', '))}</div></div>
+<p class="lead" style="margin-top:18px">The audit encrypts each sample to that key on the provider's machine (X25519, HKDF-SHA256, XChaCha20-Poly1305), so NEAR AI's gateway only relays ciphertext; the model TEE signs the exchange with the same key.</p>
 <h2>What was checked</h2><table><tr><th></th><th>TEE</th><th>Check</th><th>Detail</th></tr>${rows}</table>
 <p class="note">Nothing is stored: the report, the nonce and the result exist only in this response.</p>`);
 }
@@ -184,7 +206,7 @@ export function createApp() {
       if (req.method === 'GET' && url.pathname === '/') return send(200, await home());
       if (req.method === 'GET' && url.pathname === '/logo.png') return send(200, LOGO, 'image/png');
       if (req.method === 'GET' && url.pathname === '/verified') return send(200, await verifiedPage());
-      if (req.method === 'GET' && url.pathname === '/api/verified') return sendJson(200, await attestModel(DEFAULT_MODEL));
+      if (req.method === 'GET' && url.pathname === '/api/verified') return sendJson(200, await attestModel(DEFAULT_MODEL, process.env.NEARAI_CLOUD_API_KEY, { signingAlgo: 'ed25519' }));
       if (req.method === 'GET' && (m = url.pathname.match(/^\/dataset\/(\d+)$/))) {
         const html = await dataset(m[1]);
         return html ? send(200, html) : send(404, page('Not found', '<h1>No such dataset</h1>'));

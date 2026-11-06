@@ -567,3 +567,50 @@ fn second_funder_is_refused() {
     env.call(BOB, NearToken::from_near(1));
     m.fund_agent(acc(AGENT), U128(1));
 }
+
+// ---------- dynamic NFT ----------
+
+fn card(m: &Market, id: &TokenId) -> (String, near_sdk::serde_json::Value) {
+    use near_sdk::base64::Engine;
+    let meta = m.nft_token(id.clone()).unwrap().metadata.unwrap();
+    let media = meta.media.unwrap();
+    let b64 = media.strip_prefix("data:image/svg+xml;base64,").expect("an SVG data URL");
+    let svg = String::from_utf8(near_sdk::base64::engine::general_purpose::STANDARD.decode(b64).unwrap()).unwrap();
+    (svg, near_sdk::serde_json::from_str(&meta.extra.unwrap()).unwrap())
+}
+
+#[test]
+fn the_card_follows_earnings_sales_and_the_audit() {
+    let (env, mut m) = setup();
+    let id = publish(&env, &mut m);
+    let (svg, extra) = card(&m, &id);
+    assert!(svg.contains("0.000 NEAR") && svg.contains("NO PRIVACY AUDIT") && svg.contains("0 TRAINING RUNS · 0 SALES"));
+    assert_eq!(extra["holder"], ALICE);
+
+    let o = order(&env, &mut m, &id);
+    env.call(RUNNER, yocto(0));
+    m.deliver(o, HASH.into(), HASH.into());
+    env.call(ALICE, one());
+    m.set_privacy_audit(id.clone(), HASH.into(), "Qwen/Qwen3.8-27B".into(), HASH.into());
+    env.call(ALICE, one());
+    m.nft_transfer(acc(BOB), id.clone(), None, None);
+
+    let (svg, extra) = card(&m, &id);
+    assert!(svg.contains("EARNED</text><text x='24' y='170' fill='#fff' font-family='monospace' font-size='28'>1.800 NEAR"), "{svg}");
+    assert!(svg.contains("1 TRAINING RUN · 1 SALE") && svg.contains("PRIVACY AUDIT RECORDED"));
+    assert_eq!(extra["holder"], BOB);
+    assert_eq!(extra["in_vault"], "1800000000000000000000000");
+    assert_eq!(m.nft_tokens(None, None)[0].metadata.as_ref().unwrap().media, m.nft_token(id).unwrap().metadata.unwrap().media);
+}
+
+#[test]
+fn a_hostile_title_cannot_break_out_of_the_card() {
+    let (env, mut m) = setup();
+    let id = publish(&env, &mut m);
+    let mut t = m.tokens.token_metadata_by_id.as_mut().unwrap();
+    let mut meta = t.get(&id).unwrap();
+    meta.title = Some("<script>x</script>' onload='y".into());
+    t.insert(&id, &meta);
+    let (svg, _) = card(&m, &id);
+    assert!(!svg.contains("<script>") && svg.contains("&lt;script&gt;") && svg.contains("&apos; onload=&apos;"));
+}
