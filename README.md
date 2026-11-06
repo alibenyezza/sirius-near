@@ -11,10 +11,14 @@ budget a human gave them**, with a key that cannot do anything else.
 Built at NEAR HACKATHON (Nov 2026). Tracks: **Privacy & Private AI** (`privacy`), **NFTs That Do Something**
 (`nfts`), **AI Security & Defense** (`security`).
 
+**Live demo: <https://sirius-near.onrender.com>** (read-only pages, every value read from testnet; the free instance
+sleeps when idle, so the first load can take about 50 seconds).
+
 ## Check it in 60 seconds (no wallet, no key)
 
 | Do | See |
 |---|---|
+| Open <https://sirius-near.onrender.com/dataset/6> | the sealed NFT: its keyless vault, the card the contract draws, the recorded audit, `Allow`; `/dataset/5` shows `Block` for the poisoned NFT; `/verified` attests NEAR AI Cloud with a fresh nonce on every load |
 | `cd near/agent && npm ci && node privacy-audit.mjs --attest-only --e2ee` | about 30 `PASS` lines for the model TEE and the gateway TEE: Intel TDX quote (dcap-qvl), debug off, RTMR3 event-log replay, MRCONFIGID, NVIDIA GPUs, and the **Ed25519 E2EE key bound in the quote with your nonce**; then `VERIFIED` |
 | `node seal.mjs check ../examples/hospital-stays-fictional.csv.sealed` | `sealed format: yes`, its sha256 `bc5dfed2…f4026c`, and `it cannot be opened here`: only the runner key opens it |
 | `near contract call-function as-read-only sirius-ali-market.testnet get_dataset json-args '{"token_id":"6"}' network-config testnet now` | `cid_hash` = that same sha256, and `privacy_audit` = the hash of the end-to-end encrypted audit ([log](near/scripts/sealed-demo.log)) |
@@ -162,7 +166,7 @@ Requirements: Node 22, and for the contracts Rust with [`cargo-near`](https://gi
    `... --attest-only --e2ee` (the Ed25519 key used for end-to-end encryption). You see 30 to 50 `PASS` lines (Intel
    TDX, debug off, RTMR3, NVIDIA GPUs, key and nonce binding, for the model and the gateway) and
    `VERIFIED: every check passed`. No API key is needed for this step.
-2. **Open the pages.** `node web.mjs`, then <http://localhost:4320>. You see the dataset NFTs read live from testnet.
+2. **Open the pages.** <https://sirius-near.onrender.com>, or locally `node web.mjs`, then <http://localhost:4320>. You see the dataset NFTs read live from testnet.
    Open `/dataset/4`: the vault, its live balance, Alice → Bob in the holders, the history above. Open `/verified`:
    a new attestation with a new nonce on every load.
 3. **Try the holder page.** Open `/holder/4` and sign with a NEAR testnet wallet. Unless you are
