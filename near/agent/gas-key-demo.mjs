@@ -11,7 +11,7 @@ import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Account, KeyPairSigner, PublicKey, actions, teraToGas } from 'near-api-js';
 import { getDataset, loadAgent, MARKET, nearToYocto, orderWithBudget, provider, view, yoctoToNear } from './lib/near.mjs';
-import { decide, gatherSignals, loadBlocklist, loadPolicy } from './lib/guard.mjs';
+import { decide, gatherSignals, loadPolicy } from './lib/guard.mjs';
 
 const [funderFile, attacker] = process.argv.slice(2);
 if (!funderFile || !attacker) throw new Error('usage: gas-key-demo.mjs <funder keychain file> <attacker account>');
@@ -59,7 +59,7 @@ say(`   ${publicKey}: GasKeyFunctionCall, receiver ${k0.receiver_id}, methods ${
 say(`   gas key balance ${yoctoToNear(k0.balance)} NEAR, account balance ${await accountNear()} NEAR`);
 
 say(`\n2. It pays a training run on NFT 4 (offer 0.6 NEAR) after the counterparty check`);
-const check = decide(await gatherSignals('4'), loadPolicy(), loadBlocklist(), nearToYocto('0.6'));
+const check = decide(await gatherSignals('4'), loadPolicy(), nearToYocto('0.6'));
 say(`   check: ${check.verdict.toUpperCase()}${check.reasons.length ? ` (${check.reasons.map((r) => r.check).join(', ')})` : ''}`);
 const before = { key: await keyBalance(), account: await accountNear() };
 const d = await getDataset('4');

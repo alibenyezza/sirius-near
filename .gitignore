@@ -15,6 +15,7 @@ target/
 !near/scripts/privacy-audit.log
 !near/scripts/gas-key-demo.log
 !near/scripts/sealed-demo.log
+!near/scripts/report-demo.log
 
 # Keys
 *.pem

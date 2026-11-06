@@ -1,8 +1,15 @@
 {
-  "note": "Written by the human who funds the agent. The agent reads it and cannot change it.",
+  "note": "Written by the human who funds the agent. The agent reads it and cannot change it. An on-chain report blocks only when a trusted reporter filed it; any other report, a young account or an unused one is a warning for the human.",
   "market": "sirius-ali-market.testnet",
   "maxPricePerOrderNear": "0.6",
-  "allowedProfiles": ["linear_regression"],
+  "allowedProfiles": [
+    "linear_regression"
+  ],
   "requirePrivacyAudit": "warn",
-  "recentTransferMinutes": 60
+  "recentTransferMinutes": 60,
+  "trustedReporters": [
+    "sirius-ali-carol.testnet"
+  ],
+  "minAccountAgeDays": 3,
+  "minAccountTransactions": 3
 }

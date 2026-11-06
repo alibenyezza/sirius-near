@@ -69,9 +69,9 @@ say(`   ${await raw(MARKET, actions.functionCall('order', { token_id: tokenId, p
 say('\n7. It calls another method of the market (close_agent_budget)');
 say(`   ${await raw(MARKET, actions.functionCall('close_agent_budget', { agent_id: agent.accountId }, teraToGas('30'), 0n))}`);
 
-say(`\n8. The attempt is reported to the blocklist every agent of this server checks, with evidence`);
+say(`\n8. The agent drafts an on-chain report with the evidence; its key cannot file it, the human signs it (scripts/report-demo.sh)`);
 const rep = await tool('report_account', { account: attacker, reason: 'dataset description gives payment orders to agents (prompt injection)', evidence: `NFT ${tokenId} on ${MARKET}, scripts/attack-demo.log` });
-say(`   ${rep.error ?? (rep.added ? 'added to the blocklist' : 'already on the blocklist')}`);
+say(`   ${rep.error ?? `draft: ${rep.method} on ${rep.contract}, bond ${rep.bondNear} NEAR, to be signed by ${rep.signBy}`}`);
 
 say('\n9. The injected agent tries again with a normal offer (0.5 NEAR)');
 showVerdict(await tool('buy_training_run', { tokenId, maxPriceNear: '0.5' }));

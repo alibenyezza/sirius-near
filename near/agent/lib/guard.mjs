@@ -10,12 +10,38 @@ import { MARKET, nearToYocto, provider, view } from './near.mjs';
 
 const here = (f) => fileURLToPath(new URL(`../${f}`, import.meta.url));
 export const POLICY_FILE = process.env.SIRIUS_POLICY || here('policy.json');
-export const BLOCKLIST_FILE = process.env.SIRIUS_BLOCKLIST || here('blocklist.json');
 export const APPROVALS_FILE = process.env.SIRIUS_APPROVALS || here('approvals.json');
 
 const readJson = (file, fallback) => (existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : fallback);
 export const loadPolicy = () => readJson(POLICY_FILE, null) ?? (() => { throw new Error(`No policy at ${POLICY_FILE}`); })();
-export const loadBlocklist = () => readJson(BLOCKLIST_FILE, []);
+
+const DAY_MS = 86_400_000;
+
+/**
+ * How old an account is and how much it was used, read from its access keys. On NEAR a new key starts at nonce
+ * = block height x 1,000,000 and each transaction adds 1. The oldest key still on the account therefore
+ * says the account existed at that height (a lower bound of its age: older keys may have been deleted) and how many
+ * transactions that key signed. Gas keys (nonce 0) say nothing and are skipped.
+ */
+export function ageFromKeys(keys, head) {
+  const nonces = (keys ?? []).map((k) => BigInt(k.access_key?.nonce ?? 0)).filter((n) => n >= 1_000_000n);
+  if (!nonces.length) return { known: false, keys: keys?.length ?? 0 };
+  const oldest = nonces.reduce((a, b) => (a < b ? a : b));
+  const sinceHeight = Number(oldest / 1_000_000n);
+  const days = ((head.height - sinceHeight) * head.msPerBlock) / DAY_MS;
+  return { known: true, sinceHeight, days: Math.max(0, Math.round(days * 10) / 10), transactions: Number(oldest % 1_000_000n) };
+}
+
+/** Current height and block time, measured over the last 20,000 blocks (kept by every RPC node). Cached 1 min. */
+let headCache = null;
+export async function chainHead() {
+  if (headCache && Date.now() - headCache.at < 60_000) return headCache.head;
+  const b = await provider.viewBlock({ finality: 'final' });
+  const old = await provider.viewBlock({ blockId: b.header.height - 20_000 });
+  const head = { height: b.header.height, msPerBlock: Number(BigInt(b.header.timestamp) - BigInt(old.header.timestamp)) / 1e6 / 20_000 };
+  headCache = { at: Date.now(), head };
+  return head;
+}
 
 // Text a dataset holder controls that reads like orders to an agent. A match is a warning, not a block: honest
 // descriptions can contain these words, so a human looks.
@@ -44,6 +70,15 @@ export async function gatherSignals(tokenId, { market = MARKET } = {}) {
     provider.viewAccessKeyList({ accountId: dataset.vault }).catch(() => null),
   ]);
   const publisher = history.find((h) => h.event.Published)?.event.Published.publisher ?? null;
+  const people = [...new Set([token.owner_id, publisher].filter(Boolean))];
+  const head = await chainHead();
+  const counterparties = Object.fromEntries(await Promise.all(people.map(async (who) => {
+    const [reports, keys] = await Promise.all([
+      view('get_reports', { account_id: who }, market),
+      provider.viewAccessKeyList({ accountId: who }).then((r) => r.keys).catch(() => null),
+    ]);
+    return [who, { reports, age: ageFromKeys(keys, head) }];
+  })));
   const lastTransfer = history.filter((h) => h.event.Transferred).at(-1);
   const lastPriceChange = history.filter((h) => h.event.PriceChanged).at(-1);
   return {
@@ -52,6 +87,7 @@ export async function gatherSignals(tokenId, { market = MARKET } = {}) {
     market,
     holder: token.owner_id,
     publisher,
+    counterparties,
     text: `${token.metadata?.title ?? ''}\n${token.metadata?.description ?? ''}`,
     profile: dataset.profile,
     priceYocto: dataset.price,
@@ -72,7 +108,7 @@ export async function gatherSignals(tokenId, { market = MARKET } = {}) {
  * The verdict. `offerYocto` is what the agent is about to offer; `now` is injectable for tests.
  * Returns { verdict: 'allow' | 'warn' | 'block', reasons: [{ level, check, detail }] }.
  */
-export function decide(signals, policy, blocklist = [], offerYocto = null, now = Date.now()) {
+export function decide(signals, policy, offerYocto = null, now = Date.now()) {
   const reasons = [];
   const add = (level, check, detail) => reasons.push({ level, check, detail });
   if (!signals.found) {
@@ -90,10 +126,22 @@ export function decide(signals, policy, blocklist = [], offerYocto = null, now =
     if (signals.vaultKeyCount !== 0) add('block', 'vault keys', `vault has ${signals.vaultKeyCount ?? 'unknown'} access keys, expected none`);
   }
 
-  // who gets paid: reported accounts
-  for (const who of [...new Set([signals.holder, signals.publisher].filter(Boolean))]) {
-    const hit = blocklist.find((b) => b.account === who);
-    if (hit) add('block', 'blocklist', `${who} was reported by ${hit.reportedBy}: ${hit.reason} (evidence: ${hit.evidence})`);
+  // who gets paid: reports filed on-chain in the market (bonded), and how old and used the account is.
+  // A report counts as a block only from a reporter the human trusts; anyone else's report is a warning, so a
+  // stranger paying a bond cannot block an honest seller.
+  const trusted = new Set(policy.trustedReporters ?? []);
+  for (const [who, c] of Object.entries(signals.counterparties ?? {})) {
+    const role = who === signals.holder ? (who === signals.publisher ? 'holder and publisher' : 'holder') : 'publisher';
+    for (const r of c.reports ?? []) {
+      const level = trusted.has(r.reporter) ? 'block' : 'warn';
+      add(level, 'reported', `${role} ${who} was reported on-chain by ${r.reporter}${level === 'warn' ? ' (not a reporter the policy trusts)' : ''}: ${r.reason} (evidence: ${r.evidence})`);
+    }
+    const a = c.age;
+    if (!a?.known) add('warn', 'account age', `${role} ${who}: age unknown (no access key with a nonce to read)`);
+    else {
+      if (policy.minAccountAgeDays && a.days < policy.minAccountAgeDays) add('warn', 'new account', `${role} ${who} is ${a.days} days old (policy: at least ${policy.minAccountAgeDays})`);
+      if (policy.minAccountTransactions && a.transactions < policy.minAccountTransactions) add('warn', 'little activity', `${role} ${who} signed ${a.transactions} transaction(s) with its oldest key (policy: at least ${policy.minAccountTransactions})`);
+    }
   }
 
   // price against the human's limits
@@ -135,16 +183,4 @@ export function addApproval(tokenId, maxOfferNear, by) {
   const approvals = readJson(APPROVALS_FILE, []);
   approvals.push({ tokenId: String(tokenId), maxOfferYocto: nearToYocto(maxOfferNear), by, at: new Date().toISOString() });
   writeFileSync(APPROVALS_FILE, JSON.stringify(approvals, null, 2) + '\n');
-}
-
-/** Any agent can report an account; a report without evidence is refused. */
-export function report({ account, reason, evidence, reportedBy }) {
-  if (!/^[a-z0-9._-]{2,64}$/.test(account ?? '')) throw new Error('account: a NEAR account id');
-  if (!reason?.trim() || !evidence?.trim()) throw new Error('a report needs a reason and evidence (a transaction, an NFT id, a log line)');
-  const list = loadBlocklist();
-  if (list.some((b) => b.account === account)) return { added: false, entry: list.find((b) => b.account === account) };
-  const entry = { account, reason: reason.slice(0, 300), evidence: evidence.slice(0, 300), reportedBy, at: new Date().toISOString() };
-  list.push(entry);
-  writeFileSync(BLOCKLIST_FILE, JSON.stringify(list, null, 2) + '\n');
-  return { added: true, entry };
 }

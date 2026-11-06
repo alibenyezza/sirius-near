@@ -29,6 +29,10 @@ use near_sdk::{
 pub const VAULT_FUNDING: NearToken = NearToken::from_millinear(20);
 /// Upper bound of the storage a published token needs (token, metadata, dataset record, first history entry).
 pub const PUBLISH_STORAGE_BOUND: NearToken = NearToken::from_millinear(60);
+/// Bond of a report: pays its storage and makes spam cost something. Given back when the reporter retracts it.
+pub const REPORT_BOND: NearToken = NearToken::from_millinear(50);
+pub const MAX_REPORTS_PER_ACCOUNT: usize = 20;
+const MAX_REPORT_TEXT: usize = 300;
 const MAX_HISTORY: usize = 200;
 const MAX_FEE_BPS: u16 = 2_000;
 const GAS_FOR_VAULT_INIT: Gas = Gas::from_tgas(10);
@@ -139,6 +143,20 @@ pub struct AgentBudget {
     pub balance: U128,
     pub max_per_order: U128,
     pub spent: U128,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug)]
+pub struct Report {
+    pub reporter: AccountId,
+    pub reason: String,
+    pub evidence: String,
+    pub at_ms: U64,
+    pub bond: U128,
+    /// The bond came from the reporter's agent budget; it goes back to that budget, or to `refund_to` (the funder)
+    /// if the budget was closed meanwhile.
+    pub from_budget: bool,
+    pub refund_to: AccountId,
 }
 
 #[near(serializers = [json])]
@@ -513,6 +531,87 @@ impl Market {
         Self::budget_of(&agent_id)
     }
 
+    // ---------- reports ----------
+
+    /// Anyone can report an account, with a reason and evidence (a transaction, an NFT id). The report costs a bond
+    /// (`REPORT_BOND`), attached or taken from the reporter's agent budget here (a function-call key cannot attach
+    /// deposits). One report per reporter and account, at most `MAX_REPORTS_PER_ACCOUNT` per account. Nobody, the
+    /// market owner included, can remove someone else's report; the reporter can retract it and gets the bond back.
+    /// The contract does not judge reports: each reader decides whose reports count (the agent's policy lists the
+    /// reporters it trusts), so a stranger's report can raise a warning but cannot block an honest seller.
+    #[payable]
+    pub fn report(&mut self, account_id: AccountId, reason: String, evidence: String) -> u32 {
+        let reporter = env::predecessor_account_id();
+        require!(reporter != account_id, "You cannot report yourself");
+        require!(!reason.trim().is_empty() && reason.len() <= MAX_REPORT_TEXT, "Reason: 1 to 300 bytes");
+        require!(!evidence.trim().is_empty() && evidence.len() <= MAX_REPORT_TEXT, "Evidence: 1 to 300 bytes (a transaction, an NFT id)");
+        let mut list = Self::reports_of(&account_id);
+        require!(!list.iter().any(|r| r.reporter == reporter), "You already reported this account");
+        require!(list.len() < MAX_REPORTS_PER_ACCOUNT, "This account has the maximum number of reports");
+        let bond = REPORT_BOND.as_yoctonear();
+        let deposit = env::attached_deposit().as_yoctonear();
+        let (from_budget, refund_to) = if deposit > 0 {
+            require!(deposit == bond, "Attach exactly the report bond (0.05 NEAR)");
+            (false, reporter.clone())
+        } else {
+            let mut b = Self::budget_of(&reporter)
+                .unwrap_or_else(|| env::panic_str("Attach the report bond (0.05 NEAR), or report from an agent budget"));
+            require!(b.balance.0 >= bond, "Budget too low for the report bond");
+            b.balance = U128(b.balance.0 - bond);
+            Self::save_budget(&reporter, &b);
+            (true, b.funder)
+        };
+        if list.is_empty() {
+            let mut index = Self::reported_index();
+            index.push(account_id.clone());
+            Self::save_reported_index(&index);
+        }
+        list.push(Report { reporter, reason, evidence, at_ms: U64(env::block_timestamp_ms()), bond: U128(bond), from_budget, refund_to });
+        Self::save_reports(&account_id, &list);
+        list.len() as u32
+    }
+
+    /// The reporter withdraws their report and gets the bond back (to the agent budget it came from, if still open).
+    pub fn retract_report(&mut self, account_id: AccountId) -> PromiseOrValue<()> {
+        let reporter = env::predecessor_account_id();
+        let mut list = Self::reports_of(&account_id);
+        let i = list.iter().position(|r| r.reporter == reporter).unwrap_or_else(|| env::panic_str("You have no report on this account"));
+        let r = list.remove(i);
+        if list.is_empty() {
+            env::storage_remove(&Self::reports_key(&account_id));
+            let mut index = Self::reported_index();
+            index.retain(|a| a != &account_id);
+            Self::save_reported_index(&index);
+        } else {
+            Self::save_reports(&account_id, &list);
+        }
+        if r.from_budget {
+            if let Some(mut b) = Self::budget_of(&reporter).filter(|b| b.funder == r.refund_to) {
+                b.balance = U128(b.balance.0 + r.bond.0);
+                Self::save_budget(&reporter, &b);
+                return PromiseOrValue::Value(());
+            }
+        }
+        PromiseOrValue::Promise(Promise::new(r.refund_to).transfer(NearToken::from_yoctonear(r.bond.0)))
+    }
+
+    pub fn get_reports(&self, account_id: AccountId) -> Vec<Report> {
+        Self::reports_of(&account_id)
+    }
+
+    /// Reported accounts with their number of reports, in the order they were first reported.
+    pub fn get_reported_accounts(&self, from_index: Option<u32>, limit: Option<u32>) -> Vec<(AccountId, u32)> {
+        Self::reported_index()
+            .into_iter()
+            .skip(from_index.unwrap_or(0) as usize)
+            .take(limit.unwrap_or(50).min(100) as usize)
+            .map(|a| {
+                let n = Self::reports_of(&a).len() as u32;
+                (a, n)
+            })
+            .collect()
+    }
+
     // ---------- views ----------
 
     pub fn get_config(&self) -> Config {
@@ -686,6 +785,27 @@ impl Market {
 
     fn save_budget(agent: &AccountId, b: &AgentBudget) {
         env::storage_write(&Self::budget_key(agent), &near_sdk::borsh::to_vec(b).unwrap());
+    }
+
+    // Reports too: raw keys, no state migration.
+    fn reports_key(account: &AccountId) -> Vec<u8> {
+        [b"reports:".as_slice(), account.as_bytes()].concat()
+    }
+
+    fn reports_of(account: &AccountId) -> Vec<Report> {
+        env::storage_read(&Self::reports_key(account)).map(|v| near_sdk::borsh::from_slice(&v).unwrap()).unwrap_or_default()
+    }
+
+    fn save_reports(account: &AccountId, list: &Vec<Report>) {
+        env::storage_write(&Self::reports_key(account), &near_sdk::borsh::to_vec(list).unwrap());
+    }
+
+    fn reported_index() -> Vec<AccountId> {
+        env::storage_read(b"reported-index").map(|v| near_sdk::borsh::from_slice(&v).unwrap()).unwrap_or_default()
+    }
+
+    fn save_reported_index(index: &Vec<AccountId>) {
+        env::storage_write(b"reported-index", &near_sdk::borsh::to_vec(index).unwrap());
     }
 
     fn order_paid_from_budget(order_id: u64) -> bool {

@@ -15,7 +15,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { checkHolder, issueChallenge } from './lib/gate.mjs';
 import { allOrders, getDataset, listDatasets, MARKET, view, yoctoToNear } from './lib/near.mjs';
 import { attestModel, DEFAULT_MODEL, sha256 } from './lib/nearai.mjs';
-import { decide, gatherSignals, loadBlocklist, loadPolicy } from './lib/guard.mjs';
+import { decide, gatherSignals, loadPolicy } from './lib/guard.mjs';
 
 const PORT = Number(process.env.PORT || 4320);
 const LOGO = readFileSync(new URL('./assets/sirius-mark.png', import.meta.url));
@@ -99,11 +99,14 @@ async function dataset(id) {
   const media = token?.metadata?.media ?? '';
   const cardImg = media.startsWith('data:image/svg+xml;base64,') ? `<img src="${esc(media)}" alt="NFT card" width="260" height="260" style="border-radius:18px;display:block">` : '';
   const sealedFile = sealedCopy(raw.cid_hash);
-  const check = await gatherSignals(id).then((sig) => decide(sig, loadPolicy(), loadBlocklist())).catch(() => null);
+  const sig = await gatherSignals(id).catch(() => null);
+  const check = sig ? decide(sig, loadPolicy()) : null;
+  const people = Object.entries(sig?.counterparties ?? {}).map(([who, c]) => `<div class="note"><span class="mono">${esc(who)}</span>: ${c.age.known ? `at least ${esc(c.age.days)} days old, ${esc(c.age.transactions)} transaction(s) from its oldest key` : 'age unknown'}, ${c.reports.length} on-chain report(s)</div>`).join('');
   const tone = { allow: ['verified', 'pass', 'Allow'], warn: ['warned', 'warn', 'Warn: a human approves'], block: ['notverified', 'fail', 'Block'] };
   const guardCard = check ? `<h2>Before an agent pays</h2><div class="card ${tone[check.verdict][0]}"><div class="big ${tone[check.verdict][1]}">${tone[check.verdict][2]}</div>
 <div class="k">counterparty check of an agent with the policy in <span class="mono">policy.json</span> (max ${esc(loadPolicy().maxPricePerOrderNear)} NEAR per order)</div>
-${check.reasons.length ? `<table style="margin-top:12px">${check.reasons.map((r) => `<tr><td class="${r.level === 'block' ? 'fail' : 'warn'}">${esc(r.level)}</td><td>${esc(r.check)}</td><td>${esc(r.detail)}</td></tr>`).join('')}</table>` : '<div class="note">vault keyless and on the market vault code, nobody reported, price within the policy, audit recorded</div>'}</div>` : '';
+${check.reasons.length ? `<table style="margin-top:12px">${check.reasons.map((r) => `<tr><td class="${r.level === 'block' ? 'fail' : 'warn'}">${esc(r.level)}</td><td>${esc(r.check)}</td><td>${esc(r.detail)}</td></tr>`).join('')}</table>` : '<div class="note">vault keyless and on the market vault code, nobody reported, price within the policy, audit recorded</div>'}
+<div style="margin-top:10px">${people}</div><div class="note">Reports are bonded transactions in the market contract (<span class="mono">get_reports</span>); a report blocks only when the policy trusts its reporter. Age and activity are read from the accounts' key nonces.</div></div>` : '';
   const mine = orders.filter((o) => o.token_id === id);
   const audit = d.privacyAudit
     ? `<div class="card verified"><div class="k">privacy audit on NEAR AI Cloud</div><div class="mono" style="word-break:break-all">${esc(d.privacyAudit.report_hash)}</div><div class="note">model ${esc(d.privacyAudit.model)} · nonce ${esc(d.privacyAudit.nonce.slice(0, 16))}…</div></div>`

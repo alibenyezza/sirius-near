@@ -614,3 +614,108 @@ fn a_hostile_title_cannot_break_out_of_the_card() {
     let (svg, _) = card(&m, &id);
     assert!(!svg.contains("<script>") && svg.contains("&lt;script&gt;") && svg.contains("&apos; onload=&apos;"));
 }
+
+// ---------- reports ----------
+
+const MALLORY: &str = "mallory.testnet";
+
+fn bond() -> NearToken {
+    REPORT_BOND
+}
+
+#[test]
+fn a_report_with_its_bond_is_public_and_listed() {
+    let (env, mut m) = setup();
+    env.call(CAROL, bond());
+    assert_eq!(m.report(acc(MALLORY), "orders to agents in the description".into(), "NFT 5".into()), 1);
+    env.call(ALICE, bond());
+    assert_eq!(m.report(acc(MALLORY), "same".into(), "tx abc".into()), 2);
+    let r = m.get_reports(acc(MALLORY));
+    assert_eq!((r[0].reporter.as_str(), r[0].evidence.as_str(), r[0].from_budget), (CAROL, "NFT 5", false));
+    assert_eq!(m.get_reported_accounts(None, None), vec![(acc(MALLORY), 2)]);
+}
+
+#[test]
+#[should_panic(expected = "Attach the report bond (0.05 NEAR), or report from an agent budget")]
+fn a_report_without_bond_is_refused() {
+    let (env, mut m) = setup();
+    env.call(CAROL, yocto(0));
+    m.report(acc(MALLORY), "spam".into(), "none".into());
+}
+
+#[test]
+#[should_panic(expected = "Evidence: 1 to 300 bytes")]
+fn a_report_needs_evidence() {
+    let (env, mut m) = setup();
+    env.call(CAROL, bond());
+    m.report(acc(MALLORY), "trust me".into(), "  ".into());
+}
+
+#[test]
+#[should_panic(expected = "You already reported this account")]
+fn one_report_per_reporter() {
+    let (env, mut m) = setup();
+    env.call(CAROL, bond());
+    m.report(acc(MALLORY), "a".into(), "b".into());
+    env.call(CAROL, bond());
+    m.report(acc(MALLORY), "a again".into(), "b".into());
+}
+
+#[test]
+#[should_panic(expected = "You have no report on this account")]
+fn nobody_removes_someone_elses_report_not_even_the_owner() {
+    let (env, mut m) = setup();
+    env.call(CAROL, bond());
+    m.report(acc(MALLORY), "a".into(), "b".into());
+    env.call(OWNER, yocto(0));
+    let _ = m.retract_report(acc(MALLORY));
+}
+
+#[test]
+fn the_reporter_retracts_and_gets_the_bond_back() {
+    let (env, mut m) = setup();
+    env.call(CAROL, bond());
+    m.report(acc(MALLORY), "a".into(), "b".into());
+    env.call(CAROL, yocto(0));
+    let _ = m.retract_report(acc(MALLORY));
+    assert_eq!(transfers_to(&get_created_receipts(), CAROL), bond().as_yoctonear());
+    assert!(m.get_reports(acc(MALLORY)).is_empty());
+    assert!(m.get_reported_accounts(None, None).is_empty());
+}
+
+#[test]
+fn an_agent_pays_the_bond_from_its_budget_and_gets_it_back_there() {
+    let (env, mut m) = setup();
+    fund(&env, &mut m, 1, 1);
+    env.call(AGENT, yocto(0));
+    m.report(acc(MALLORY), "prompt injection".into(), "NFT 5".into());
+    let left = NearToken::from_near(1).as_yoctonear() - bond().as_yoctonear();
+    assert_eq!(m.get_agent_budget(acc(AGENT)).unwrap().balance, U128(left));
+    let r = &m.get_reports(acc(MALLORY))[0];
+    assert!(r.from_budget && r.refund_to == acc(CAROL));
+    env.call(AGENT, yocto(0));
+    let _ = m.retract_report(acc(MALLORY));
+    assert_eq!(m.get_agent_budget(acc(AGENT)).unwrap().balance, U128(NearToken::from_near(1).as_yoctonear()));
+    assert!(get_created_receipts().is_empty(), "the bond went back into the budget, no transfer");
+}
+
+#[test]
+fn a_bond_from_a_closed_budget_goes_back_to_the_funder() {
+    let (env, mut m) = setup();
+    fund(&env, &mut m, 1, 1);
+    env.call(AGENT, yocto(0));
+    m.report(acc(MALLORY), "a".into(), "b".into());
+    env.call(CAROL, yocto(0));
+    let _ = m.close_agent_budget(acc(AGENT));
+    env.call(AGENT, yocto(0));
+    let _ = m.retract_report(acc(MALLORY));
+    assert_eq!(transfers_to(&get_created_receipts(), CAROL), bond().as_yoctonear());
+}
+
+#[test]
+#[should_panic(expected = "You cannot report yourself")]
+fn no_self_report() {
+    let (env, mut m) = setup();
+    env.call(CAROL, bond());
+    m.report(acc(CAROL), "a".into(), "b".into());
+}

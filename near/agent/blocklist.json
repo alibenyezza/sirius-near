@@ -1,9 +1,0 @@
-[
-  {
-    "account": "sirius-ali-mallory.testnet",
-    "reason": "dataset description gives payment orders to agents (prompt injection)",
-    "evidence": "NFT 5 on sirius-ali-market.testnet, scripts/attack-demo.log",
-    "reportedBy": "agent.sirius-ali-carol.testnet",
-    "at": "2026-11-04T21:27:56.876Z"
-  }
-]

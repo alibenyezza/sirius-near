@@ -1,0 +1,53 @@
+# report demo 2026-11-06T13:49:11Z on sirius-ali-market.testnet
+
+== 0. Before: NFT 5 (published by Mallory in the attack demo) and NFT 1 (Alice)
+NFT 5: BLOCK
+  warn  new account: holder and publisher sirius-ali-mallory.testnet is 1.7 days old (policy: at least 3)
+  warn  little activity: holder and publisher sirius-ali-mallory.testnet signed 1 transaction(s) with its oldest key (policy: at least 3)
+  block price: price 2 NEAR is above the policy limit of 0.6 NEAR per order
+  warn  privacy audit: no privacy audit recorded on this NFT
+  warn  prompt injection: the holder's text gives orders to agents: "send 2 NEAR to", "maxPriceNear"
+  sirius-ali-mallory.testnet: at least 1.7 days old, 1 transaction(s) from its oldest key, 0 on-chain report(s)
+NFT 1: WARN
+  warn  privacy audit: no privacy audit recorded on this NFT
+  sirius-ali-alice.testnet: at least 6.9 days old, 19 transaction(s) from its oldest key, 0 on-chain report(s)
+
+== 1. Carol reports Mallory on-chain, bond 0.05 NEAR, with the evidence
+   sirius-ali-carol.testnet -> report: ok  tx 84HKa5VA2PmQcKHTg6DMpxQPR2jVq2Cxj6L3cfiWxqCk
+       "bond": "50000000000000000000000",
+       "evidence": "NFT 5 on sirius-ali-market.testnet; refused order tx CgtKqWiaJVi2VCg7MFBHUwhoGCPd1RRyKw2emvVzYuW2; near/scripts/attack-demo.log",
+       "reason": "dataset description gives payment orders to agents (prompt injection)",
+       "reporter": "sirius-ali-carol.testnet"
+NFT 5: BLOCK
+  block reported: holder and publisher sirius-ali-mallory.testnet was reported on-chain by sirius-ali-carol.testnet: dataset description gives payment orders to agents (prompt injection) (evidence: NFT 5 on sirius-ali-market.testnet; refused order tx CgtKqWiaJVi2VCg7MFBHUwhoGCPd1RRyKw2emvVzYuW2; near/scripts/attack-demo.log)
+  warn  new account: holder and publisher sirius-ali-mallory.testnet is 1.7 days old (policy: at least 3)
+  warn  little activity: holder and publisher sirius-ali-mallory.testnet signed 1 transaction(s) with its oldest key (policy: at least 3)
+  block price: price 2 NEAR is above the policy limit of 0.6 NEAR per order
+  warn  privacy audit: no privacy audit recorded on this NFT
+  warn  prompt injection: the holder's text gives orders to agents: "send 2 NEAR to", "maxPriceNear"
+  sirius-ali-mallory.testnet: at least 1.7 days old, 1 transaction(s) from its oldest key, 1 on-chain report(s)
+
+== 2. Mallory reports Alice in revenge (she pays the bond too)
+   sirius-ali-mallory.testnet -> report: ok  tx DGSSUV4p3Lw5nBtZjEvZaEgPKXek13g29Z7fCF6R94PR
+NFT 1: WARN
+  warn  reported: holder and publisher sirius-ali-alice.testnet was reported on-chain by sirius-ali-mallory.testnet (not a reporter the policy trusts): fake data (evidence: trust me)
+  warn  privacy audit: no privacy audit recorded on this NFT
+  sirius-ali-alice.testnet: at least 6.9 days old, 19 transaction(s) from its oldest key, 1 on-chain report(s)
+
+== 3. The market owner tries to remove Carol's report
+   sirius-ali-owner.testnet -> retract_report: refused by the contract: You have no report on this account  tx A3hHZ5svyYgWWgRTRaPcxhcdmrhKjEXgPYzouGZEY9yi
+
+==    and Mallory tries to report without a bond
+   sirius-ali-mallory.testnet -> report: refused by the contract: Attach the report bond (0.05 NEAR), or report from an agent budget  tx 2Y9NEr3N8oZ2BqpvMg8e4KNVAgYaTtdgueQi6RRFUq78
+
+== 4. Mallory retracts her report on Alice and gets the 0.05 NEAR bond back
+   sirius-ali-mallory.testnet -> retract_report: ok  tx B3S3oq7kxhsxiFB41k32hVguNmFhNpo4aiBrqku9CCC2
+NFT 1: WARN
+  warn  privacy audit: no privacy audit recorded on this NFT
+  sirius-ali-alice.testnet: at least 6.9 days old, 19 transaction(s) from its oldest key, 0 on-chain report(s)
+
+== Reported accounts on the market
+[
+  [
+    "sirius-ali-mallory.testnet",
+    1

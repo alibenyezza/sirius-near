@@ -4,13 +4,13 @@
 //
 //   node --env-file=.env approve.mjs <tokenId> <maxOfferNear>
 import { createInterface } from 'node:readline/promises';
-import { addApproval, decide, gatherSignals, loadBlocklist, loadPolicy } from './lib/guard.mjs';
+import { addApproval, decide, gatherSignals, loadPolicy } from './lib/guard.mjs';
 import { nearToYocto } from './lib/near.mjs';
 
 const [tokenId, maxOfferNear] = process.argv.slice(2);
 if (!/^\d+$/.test(tokenId ?? '') || !maxOfferNear) throw new Error('usage: approve.mjs <tokenId> <maxOfferNear>');
 if (!process.stdin.isTTY) throw new Error('approve.mjs needs a human at a terminal');
-const { verdict, reasons } = decide(await gatherSignals(tokenId), loadPolicy(), loadBlocklist(), nearToYocto(maxOfferNear));
+const { verdict, reasons } = decide(await gatherSignals(tokenId), loadPolicy(), nearToYocto(maxOfferNear));
 console.log(`NFT ${tokenId}, offer up to ${maxOfferNear} NEAR: ${verdict}`);
 for (const r of reasons) console.log(`  ${r.level.padEnd(5)} ${r.check}: ${r.detail}`);
 if (verdict === 'block') throw new Error('blocked: an approval cannot override a block, change the policy instead');

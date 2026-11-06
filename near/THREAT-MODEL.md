@@ -49,6 +49,16 @@ stops them?**
 | The runner | the full dataset, in memory, during training | It holds the seal key. **Simulated TEE on testnet:** the key lives on the runner's machine, not in an enclave. |
 | The data buyer | the trained model and its certificate | The dataset never leaves the runner. |
 
+## Reports on accounts
+
+| # | Attack | What stops it | Where |
+|---|---|---|---|
+| R1 | Spam reports to fill the contract's storage | Each report costs a 0.05 NEAR bond, which covers its storage; one report per reporter and account, at most 20 per account; 300 bytes per text. | `market::report` |
+| R2 | Pay a bond to block an honest seller (griefing) | The contract does not judge reports. A report blocks only when the agent's policy trusts its reporter (`trustedReporters`); any other report is a warning a human reads. | `guard.mjs`, `policy.json` |
+| R3 | The reported account, or the market owner, deletes a report | No such method: only the reporter can retract their own report (`You have no report on this account`). | `market::retract_report` |
+| R4 | A prompt-injected agent files false reports | The agent's key only calls `order_with_budget`; `report_account` drafts the transaction and the human signs it. | `mcp-server.mjs` |
+| R5 | A throwaway account publishes a poisoned dataset | The check reads the age and activity of holder and publisher from their key nonces (a new key starts at block height × 10⁶): younger than 3 days or fewer than 3 transactions is a warning. It is a lower bound (deleted old keys make an account look younger, never older) and costs nothing to fake except time. | `guard.mjs::ageFromKeys` |
+
 ## Known limits (stated plainly)
 
 - History entries and orders are stored by the market contract. The contract pays their storage from its own balance.
