@@ -19,7 +19,7 @@ sleeps when idle, so the first load can take about 50 seconds).
 | Do | See |
 |---|---|
 | Open <https://sirius-near.onrender.com/dataset/6> | the sealed NFT: its keyless vault, the card the contract draws, the recorded audit, `Allow`; `/dataset/5` shows `Block` for the poisoned NFT; `/verified` attests NEAR AI Cloud with a fresh nonce on every load |
-| `cd near/agent && npm ci && node privacy-audit.mjs --attest-only --e2ee` | about 30 `PASS` lines for the model TEE and the gateway TEE: Intel TDX quote (dcap-qvl), debug off, RTMR3 event-log replay, MRCONFIGID, NVIDIA GPUs, and the **Ed25519 E2EE key bound in the quote with your nonce**; then `VERIFIED` |
+| `cd near/agent && npm ci && node privacy-audit.mjs --attest-only --e2ee` | about 48 `PASS` lines for the model TEE and the gateway TEE: Intel TDX quote (dcap-qvl), debug off, RTMR3 event-log replay, MRCONFIGID, NVIDIA GPUs, and the **Ed25519 E2EE key bound in the quote with your nonce**; then `VERIFIED` |
 | `node seal.mjs check ../examples/hospital-stays-fictional.csv.sealed` | `sealed format: yes`, its sha256 `bc5dfed2…f4026c`, and `it cannot be opened here`: only the runner key opens it |
 | `near contract call-function as-read-only sirius-ali-market.testnet get_dataset json-args '{"token_id":"6"}' network-config testnet now` | `cid_hash` = that same sha256, and `privacy_audit` = the hash of the end-to-end encrypted audit ([log](near/scripts/sealed-demo.log)) |
 | `near account list-keys ds-6.sirius-ali-market.testnet network-config testnet now` | no keys: nobody can sign for the NFT's vault |
@@ -75,7 +75,7 @@ on-chain reports, account age, contract code, the agent's earlier orders, and th
 | The track asks for | In Sirius | Check it |
 |---|---|---|
 | Call NEAR AI Cloud through its OpenAI-compatible API, with a TEE model from the models endpoint | `near/agent/lib/nearai.mjs` calls `https://cloud-api.near.ai/v1` (`/models`, `/attestation/report`, `/chat/completions`, `/signature/…`, `/privacy/classify`); default model `Qwen/Qwen3.8-27B`, checked in `/models` as a private model (`owned_by: nearai`) | test `live: the default model is a private model served by NEAR AI Cloud` |
-| Fetch the attestation with a fresh random nonce, verify it as the docs describe, show a "Verified" panel listing what was checked | Every call: Intel TDX quote verified with Intel's collateral (dcap-qvl), debug off, signing key and nonce bound in the report data, compose manifest in MRCONFIGID, RTMR3 replayed from the event log, NVIDIA GPU tokens checked with NVIDIA's keys and the same nonce; for the model and the gateway | `node privacy-audit.mjs --attest-only --e2ee`: about 30 `PASS` lines, then `VERIFIED`; <https://sirius-near.onrender.com/verified> lists each check, new nonce on every load; test `live: a replayed report (other nonce) fails the binding checks` |
+| Fetch the attestation with a fresh random nonce, verify it as the docs describe, show a "Verified" panel listing what was checked | Every call: Intel TDX quote verified with Intel's collateral (dcap-qvl), debug off, signing key and nonce bound in the report data, compose manifest in MRCONFIGID, RTMR3 replayed from the event log, NVIDIA GPU tokens checked with NVIDIA's keys and the same nonce; for the model and the gateway | `node privacy-audit.mjs --attest-only --e2ee`: about 48 `PASS` lines, then `VERIFIED`; <https://sirius-near.onrender.com/verified> lists each check, new nonce on every load; test `live: a replayed report (other nonce) fails the binding checks` |
 | Keep nothing server-side after a response returns; say so and make it obvious in the code | The audit, the NEAR AI client and the web server import no disk, database or cache API at all, and a test enforces it | `near/agent/test/nostore.test.mjs` |
 | Fictional sample documents | `near/examples/hospital-stays-fictional.csv` (every name, e-mail and phone invented) and its sealed copy | |
 | Beyond the prompt | **End-to-end encrypted audit:** the sample is encrypted to the model's Ed25519 key bound in the TDX quote (NEAR AI E2EE v2), so the gateway relays only ciphertext; the reply's signature must verify under that key. **Two detectors**, each attested, compared column by column. **Sealed at rest**, and the audit hash is recorded in the NFT on-chain | NFT 6 rows below; `node seal.mjs check ../examples/hospital-stays-fictional.csv.sealed` |
@@ -268,7 +268,7 @@ Requirements: Node 22, and for the contracts Rust with [`cargo-near`](https://gi
 [`near-cli-rs`](https://github.com/near/near-cli-rs).
 
 1. **See the TEE proof.** `cd near/agent && npm ci && node privacy-audit.mjs --attest-only` (ECDSA identity) or
-   `... --attest-only --e2ee` (the Ed25519 key used for end-to-end encryption). You see 30 to 50 `PASS` lines (Intel
+   `... --attest-only --e2ee` (the Ed25519 key used for end-to-end encryption). You see about 48 `PASS` lines (Intel
    TDX, debug off, RTMR3, NVIDIA GPUs, key and nonce binding, for the model and the gateway) and
    `VERIFIED: every check passed`. No API key is needed for this step.
 2. **Open the pages.** <https://sirius-near.onrender.com>, or locally `node web.mjs`, then <http://localhost:4320>. You see the dataset NFTs read live from testnet.

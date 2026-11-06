@@ -58,6 +58,8 @@ stops them?**
 | R3 | The reported account, or the market owner, deletes a report | No such method: only the reporter can retract their own report (`You have no report on this account`). | `market::retract_report` |
 | R4 | A prompt-injected agent files false reports | The agent's key only calls `order_with_budget`; `report_account` drafts the transaction and the human signs it. | `mcp-server.mjs` |
 | R5 | A throwaway account publishes a poisoned dataset | The check reads the age and activity of holder and publisher from their key nonces (a new key starts at block height × 10⁶): younger than 3 days or fewer than 3 transactions is a warning. It is a lower bound (deleted old keys make an account look younger, never older) and costs nothing to fake except time. | `guard.mjs::ageFromKeys` |
+| R6 | The contract the agent pays is upgraded under it to a malicious version | The human pins the code hash of the build they checked (`pinnedCode`, from `verify-build.sh`); any other hash blocks. A contract that still has a full-access key is a warning. The market has no key at all, so it cannot be upgraded. | `guard.mjs::judgeCode` |
+| R7 | The agent pays twice for the same run, or keeps paying a seller whose runs never arrive | The check reads the agent's own orders: one still pending on the same NFT warns; earlier orders with the holder that were never delivered warn. | `guard.mjs::priorOrders` |
 
 ## Known limits (stated plainly)
 
