@@ -47,9 +47,22 @@ sleeps when idle, so the first load can take about 50 seconds).
 
 ## Live on testnet
 
+### Verify the deployed code
+
+`bash near/scripts/verify-build.sh` (Docker, curl, python3) builds the market in
+`sourcescan/cargo-near:0.22.0-rust-1.98.1` (pinned by digest), then compares the result with the code on testnet.
+Expected: `MATCH: the market runs this source`, code hash `EfhH4gTGeR4kG2bRc4ePAFpJFzUnRL7KmssyPa7X2QFT`
+(sha256 `cb118ac6…7de8a`). Two builds from scratch gave the same bytes.
+
+The **vault** is the exception, stated plainly: its global code (`4NdNArHp…`, sha256 `321d6034…6afc`) was built on
+31 Oct with a local, non-pinned toolchain and does not rebuild byte for byte. It cannot be redeployed: the six vaults
+run it by hash, forever (that is the point of a global contract). What the script shows instead: the deployed code
+exports exactly the four functions of `near/contracts/vault/src/lib.rs` (`new`, `get_parent`, `available`,
+`pay_out`), 35,316 bytes, and every vault is keyless (`near account list-keys ds-<id>.sirius-ali-market.testnet`).
+
 | What | Account or id |
 |---|---|
-| Market contract | [`sirius-ali-market.testnet`](https://testnet.nearblocks.io/address/sirius-ali-market.testnet) |
+| Market contract | [`sirius-ali-market.testnet`](https://testnet.nearblocks.io/address/sirius-ali-market.testnet), code hash `EfhH4gTGeR4kG2bRc4ePAFpJFzUnRL7KmssyPa7X2QFT`: rebuilt from this repository in a pinned container (`near/scripts/verify-build.sh`, deploy tx `FjNmQTWiDCMD8L459au1pLVzp7juumC6gA7JaqDGoiSn`) |
 | Vault code (global, by hash) | `4NdNArHpcvARoBb1Fi7hp8dCKtVQGJNvoTFGrUN5YkBu` (sha256 `321d6034…6afc` of `sirius_vault.wasm`), published in tx `4TVkc5V747qb6vvUSqyeDXVJ2RVK5qYMp797UzsuqRNm` |
 | Demo NFT and its vault | token `4`, vault [`ds-4.sirius-ali-market.testnet`](https://testnet.nearblocks.io/address/ds-4.sirius-ali-market.testnet) |
 | Agent | [`agent.sirius-ali-carol.testnet`](https://testnet.nearblocks.io/address/agent.sirius-ali-carol.testnet): one function-call key only (`order_with_budget` on the market, 0.25 NEAR gas allowance), funded by Carol |
