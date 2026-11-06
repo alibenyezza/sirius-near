@@ -25,7 +25,8 @@ sleeps when idle, so the first load can take about 50 seconds).
 | `near account list-keys ds-6.sirius-ali-market.testnet network-config testnet now` | no keys: nobody can sign for the NFT's vault |
 | `near account list-keys sirius-ali-market.testnet network-config testnet now` | no keys either: the market is locked, its code (checked by `bash near/scripts/verify-build.sh`, `MATCH`) can never change |
 | `node check.mjs 5` | `BLOCK`: Mallory was **reported on-chain** by Carol (bonded report in the market, with the evidence), plus the policy limits; then the age and activity of the account, read from its key nonces ([log](near/scripts/report-demo.log)) |
-| `npm test` | 45 tests pass (some read testnet live) |
+| `node check.mjs sirius-ali-market.testnet` (any account works), or <https://sirius-near.onrender.com/check> | `ALLOW`: a contract on the build pinned in `policy.json`, with no full-access key, so its code cannot change; and this agent's earlier orders there |
+| `npm test` | 51 tests pass in about 2 minutes (some read testnet live; the test files run one after another so the public RPC does not throttle them) |
 
 ![NFT page: vault, earnings, holders, history](near/docs/nft-page.png)
 
@@ -37,14 +38,60 @@ sleeps when idle, so the first load can take about 50 seconds).
   data to an AI auditor without exposing it.
 - An AI agent that buys data or compute either holds a key that can drain its wallet, or cannot pay at all.
 
-## How Sirius on NEAR answers it
+## How it works, in five steps
 
-| Track | What it does | Where |
+1. **Seal.** The provider seals the CSV to the runner's X25519 key (XChaCha20-Poly1305, `near/agent/seal.mjs`). The
+   NFT will record only the sha256 of the sealed file.
+2. **Audit, privately.** A 20-row sample is checked for personal data by a private model on NEAR AI Cloud. Before
+   anything is sent, we verify that model's TEE ourselves with a fresh nonce, then encrypt the sample to the key its
+   Intel TDX quote binds. A second detector (NEAR AI's privacy filter) runs in its own attested TEE. The hash of
+   both signed exchanges goes into the NFT.
+3. **Publish.** The market mints a NEP-171 NFT and creates its vault `ds-<id>.<market>`: an account with no access
+   key, running immutable global code, that only the market can move money out of.
+4. **Buy.** A person, or an agent from a budget a human funded, pays a training run. The money waits in the market
+   until the runner delivers the model, then goes to the vault (or back to the buyer after the deadline).
+5. **Own the income.** Whoever holds the NFT withdraws the vault. Sell the NFT and the vault, its balance and the
+   right to withdraw move with it.
+
+Before an agent pays anyone, a counterparty check (allow, warn or block, with reasons) reads the chain: the vault,
+on-chain reports, account age, contract code, the agent's earlier orders, and the human's policy.
+
+## Track by track: what the prompt asks, and where to check it
+
+### `nfts`: NFTs That Do Something
+
+| The track asks for | In Sirius | Check it |
 |---|---|---|
-| `nfts` | Dataset NFT (NEP-171/177/178/181/199). Each one has a vault account `ds-<id>.<market>` with **no access key**, running immutable global code (NEP-591, by hash), that obeys the market only; the market pays only the current holder. Withdrawals lock the token, revoke listings, and every sale is in the NFT's history. **Dynamic NFT:** `nft_token` draws the card from the contract state on every read (earned, still in the vault, runs, sales, audit badge), as an SVG in `metadata.media` plus the same figures as JSON in `metadata.extra`, so any wallet shows the live state with no metadata update. | `near/contracts`, [`near/THREAT-MODEL.md`](near/THREAT-MODEL.md) |
-| `privacy` | **Sealed at rest:** the provider seals the CSV to the runner's X25519 key (XChaCha20-Poly1305, `near/agent/seal.mjs`); the NFT records sha256 of the sealed file, and the runner opens it in memory only. **Audited end-to-end encrypted:** a sample is audited for personal data on a private TEE model of NEAR AI Cloud. Before anything is sent, a fresh nonce attestation is verified **here**: Intel TDX quote signed by Intel (dcap-qvl), debug mode off, signing key and nonce bound in the TDX report data, compose manifest measured in MRCONFIGID, RTMR3 replayed from the event log, NVIDIA GPU tokens verified with NVIDIA's keys and the same nonce. The sample is then encrypted to the model's attested Ed25519 key (NEAR AI E2EE v2: X25519, HKDF-SHA256, XChaCha20-Poly1305) and the reply comes back encrypted to a one-time key; the model TEE's Ed25519 signature over both hashes must verify under the attested key. A second, independent detector runs in its own attested TEE: NEAR AI's privacy filter (`openai/privacy-filter`, `/v1/privacy/classify`) labels personal data column by column, its reply is signed by the attested gateway, and the two verdicts are compared. The audit hash, which binds both signed exchanges, goes into the NFT. Nothing is stored. | `near/agent/lib/nearai.mjs`, `near/agent/privacy-audit.mjs`, `/verified` page |
-| Agent budget | A human funds an agent's budget in the market (`fund_agent`). The agent pays training runs with a **function-call key** limited to `order_with_budget` on the market (and a second agent with a **gas key**, NEP-611, which holds its own refillable gas and cannot lock itself out): it cannot attach deposits, send NEAR or call anything else, and the contract refuses any price above the agent's offer, the per-order limit or what is left. Exposed as an MCP server; every purchase returns a receipt. | `near/contracts`, `near/agent/mcp-server.mjs` |
-| `security` | Before the agent pays, a **counterparty check** returns allow, warn or block with its reasons: the receiving vault must be `ds-<id>.<market>`, keyless, and run the market's vault code (read from the chain); the holder and publisher must not be **reported on-chain** by a reporter the human trusts (reports are transactions in the market contract, with evidence and a 0.05 NEAR bond; nobody but the reporter can remove one, not even the market owner; a stranger's report is only a warning, so a bond cannot buy a block on an honest seller); a holder or publisher younger than 3 days, or with fewer than 3 transactions, is a warning (age and activity read from the account's key nonces: a key starts at block height × 10⁶); price, offer and training profile must fit the policy the human wrote (`policy.json`); a missing privacy audit, orders to agents hidden in the dataset text, a sale or a price change in the last hour are warnings. A block is final; a warning needs a human at a terminal (`approve.mjs`), once. An attack demo on testnet shows a prompt-injected agent stopped by the check, the contract and the key. | `near/agent/lib/guard.mjs`, `market::report`, `near/agent/attack-demo.mjs`, [`near/scripts/attack-demo.log`](near/scripts/attack-demo.log), [`near/scripts/report-demo.log`](near/scripts/report-demo.log) |
+| An NEP-171 contract that ties each token to a sub-account | Dataset NFT (NEP-171, 177, 178, 181, 199). `publish` creates `ds-<id>.<market>` with no access key, on global vault code (NEP-591, by hash); the vault obeys only the market | `near account list-keys ds-6.sirius-ali-market.testnet network-config testnet now`: no keys |
+| How control passes on transfer, and what stops the old owner from keeping access | The market pays only `nft_token(id).owner_id` at the moment of the call; a withdrawal locks the token until its callback; a sale revokes listings; the vault refuses everyone but the market | [`near/THREAT-MODEL.md`](near/THREAT-MODEL.md): 14 ways a seller could try to keep money or access, and what stops each; testnet rows "Alice tries to withdraw again" and "Alice calls the vault directly" below |
+| A gated page only current holders can open | `/holder/<id>`: the wallet signs a one-time NEP-413 challenge; the server checks the signature, then asks the contract who holds the NFT now. No session, so a past holder is refused | open <https://sirius-near.onrender.com/holder/4>; `bash near/scripts/holder-gate-check.sh` (Bob in, replay refused, Alice refused) |
+| A history view per NFT: what it earned, what it paid out, who held it | `/dataset/<id>`: holders in order, every event (published, earned, withdrawn, transferred), every training run | <https://sirius-near.onrender.com/dataset/4> |
+| Tests for the transfer path, including a sale in the middle of a payout | 47 market tests | `cargo test` in `near/contracts`: `sale_in_the_middle_of_a_payout_pays_the_buyer`, `sale_in_the_middle_of_a_payout_seller_is_refused`, `cannot_sell_while_withdrawal_in_flight`, `seller_cannot_withdraw_after_sale`, `withdrawal_revokes_listing` |
+| A threat model for the transfer, written first | [`near/THREAT-MODEL.md`](near/THREAT-MODEL.md) | |
+| Beyond the prompt | **Dynamic NFT:** `nft_token` draws the card from contract state on every read (earned, in the vault, runs, sales, audit badge), as an SVG in `metadata.media` and JSON in `metadata.extra` | `near contract call-function as-read-only sirius-ali-market.testnet nft_token json-args '{"token_id":"4"}' network-config testnet now` |
+
+### `privacy`: Privacy & Private AI
+
+| The track asks for | In Sirius | Check it |
+|---|---|---|
+| Call NEAR AI Cloud through its OpenAI-compatible API, with a TEE model from the models endpoint | `near/agent/lib/nearai.mjs` calls `https://cloud-api.near.ai/v1` (`/models`, `/attestation/report`, `/chat/completions`, `/signature/…`, `/privacy/classify`); default model `Qwen/Qwen3.8-27B`, checked in `/models` as a private model (`owned_by: nearai`) | test `live: the default model is a private model served by NEAR AI Cloud` |
+| Fetch the attestation with a fresh random nonce, verify it as the docs describe, show a "Verified" panel listing what was checked | Every call: Intel TDX quote verified with Intel's collateral (dcap-qvl), debug off, signing key and nonce bound in the report data, compose manifest in MRCONFIGID, RTMR3 replayed from the event log, NVIDIA GPU tokens checked with NVIDIA's keys and the same nonce; for the model and the gateway | `node privacy-audit.mjs --attest-only --e2ee`: about 30 `PASS` lines, then `VERIFIED`; <https://sirius-near.onrender.com/verified> lists each check, new nonce on every load; test `live: a replayed report (other nonce) fails the binding checks` |
+| Keep nothing server-side after a response returns; say so and make it obvious in the code | The audit, the NEAR AI client and the web server import no disk, database or cache API at all, and a test enforces it | `near/agent/test/nostore.test.mjs` |
+| Fictional sample documents | `near/examples/hospital-stays-fictional.csv` (every name, e-mail and phone invented) and its sealed copy | |
+| Beyond the prompt | **End-to-end encrypted audit:** the sample is encrypted to the model's Ed25519 key bound in the TDX quote (NEAR AI E2EE v2), so the gateway relays only ciphertext; the reply's signature must verify under that key. **Two detectors**, each attested, compared column by column. **Sealed at rest**, and the audit hash is recorded in the NFT on-chain | NFT 6 rows below; `node seal.mjs check ../examples/hospital-stays-fictional.csv.sealed` |
+
+### `security`: AI Security & Defense
+
+| The track asks for | In Sirius | Check it |
+|---|---|---|
+| A counterparty check before an agent pays or calls a contract: allow, warn or block, with reasons | `near/agent/lib/guard.mjs`, for a dataset NFT or **any account**: CLI, MCP tools (`check_counterparty`, `check_account`), web page and JSON API | `node check.mjs 5`, `node check.mjs sirius-ali-mallory.testnet`; <https://sirius-near.onrender.com/check>; `GET /api/check/<account>` |
+| Signal: account age and activity | Read from the account's key nonces (a new key starts at block height × 10⁶, each transaction adds 1), no indexer. Under 3 days or 3 transactions: warning | `node check.mjs 5` shows `sirius-ali-mallory.testnet is 2 days old` |
+| Signal: is the receiver a contract, and did its code change recently | The human pins the code hash of builds they checked (`pinnedCode` in `policy.json`, from `verify-build.sh`): another hash blocks. A contract that still has a full-access key can change at any time: warning. A vault must run the vault code named in the market's config | `node check.mjs sirius-ali-market.testnet`: `runs the pinned build … the code cannot change` |
+| Signal: prior interactions between this agent and the receiver | The agent's market orders with the receiver: delivered runs are noted, orders that were never delivered warn, a still-pending order on the same NFT warns (paying again buys a second run) | `node check.mjs 4`: `1 earlier run(s) … delivered (orders 7)` |
+| Signal: a shared blocklist other agents report to, with evidence | `report(account, reason, evidence)` in the market contract, with a 0.05 NEAR bond; only the reporter can retract; a trusted reporter blocks, a stranger only warns | `near/scripts/report-demo.log`; tests `nobody_removes_someone_elses_report_not_even_the_owner`, `a stranger's report only warns: a bond cannot buy a block on an honest seller` |
+| An agent-side wrapper that refuses to sign on block and asks a human on warn | `buy_training_run` (MCP) runs the check first; a warning needs `node approve.mjs <id> <max offer>` by a human, used once | test `buy_training_run never signs on a block or an unapproved warning` |
+| A function-call key scoped to one contract, never a full-access key, with its limits explained | `agent.sirius-ali-carol.testnet`: one key, `order_with_budget` on the market only; plus a gas-key agent (NEP-611) that cannot lock itself out | [What the agent's key can and cannot do](#what-the-agents-key-can-and-cannot-do) |
+| An attack demo: a prompt-injected agent tries to pay a known-bad address and is stopped, with the log | `near/agent/attack-demo.mjs` on testnet: 10 attempts, stopped by the check, the contract and the key | [`near/scripts/attack-demo.log`](near/scripts/attack-demo.log) |
 
 ## Live on testnet
 
@@ -126,15 +173,18 @@ way after the other (scripted, no LLM, so the run is the same every time). Full 
 
 | The injected agent tries to | Stopped by | What it gets back |
 |---|---|---|
-| pay through its tool with the offer from the description (5 NEAR) | the check | `BLOCK`: price and offer above the 0.6 NEAR policy limit; warnings for the missing audit and for `"send 2 NEAR to"`, `"maxPriceNear"` in the text |
-| skip the check and call the market directly with its key | the contract | `Price above the budget's per-order limit` (tx `CgtKqWiaJVi2VCg7MFBHUwhoGCPd1RRyKw2emvVzYuW2`) |
+| pay through its tool with the offer from the description (5 NEAR) | the check | `BLOCK`: Mallory is reported on-chain by a trusted reporter; price and offer above the 0.6 NEAR policy limit; warnings for the 2-day-old account, the missing audit and `"send 2 NEAR to"`, `"maxPriceNear"` in the text |
+| skip the check and call the market directly with its key | the contract | `Price above the budget's per-order limit` (tx `S92q9f8ZagxGiqVA1Q7yTbK46oitf7dAFyB3rX3mkkK`) |
 | send 0.1 NEAR to Mallory | the protocol | `AccessKeyRequiresFullAccessActionError` |
 | call a contract of Mallory | the protocol | `AccessKeyReceiverMismatchActionError` |
 | attach a deposit to `order` on the market | the protocol | `AccessKeyDepositWithFunctionCallActionError` |
 | call another market method (`close_agent_budget`) | the protocol | `AccessKeyMethodNameMismatchActionError` |
-| try again at a normal price, after the report | the check | `BLOCK`: Mallory is reported, with the evidence (in this 4 Nov run the report went to a local file; reports are now on-chain, see below) |
+| try again at a normal price (0.5 NEAR) | the check | `BLOCK`: Mallory is reported on-chain by Carol, with the evidence; the price is above the policy |
+| any agent asks about Mallory's account before sending funds (`check_account`) | the check | `BLOCK`: the same on-chain report; the account is 2 days old |
 
-The budget is untouched (1 NEAR left) and nothing reached Mallory.
+The budget is untouched (0.5 NEAR before and after) and nothing reached Mallory. This run is from 6 Nov; the agent
+also drafts a report with the new evidence, which only a human can sign. The first run (4 Nov, before on-chain
+reports existed) had the same refusals (order tx `CgtKqWiaJVi2VCg7MFBHUwhoGCPd1RRyKw2emvVzYuW2`, now the evidence in Carol's report).
 
 The dataset page shows the same verdict to anyone (`/dataset/5`):
 
@@ -154,6 +204,17 @@ The check also reads how old and how used the holder and publisher are, without 
 starts at nonce = block height × 1,000,000 and each transaction adds 1, so the oldest key tells when the account
 already existed and how many transactions it signed. Younger than 3 days or fewer than 3 transactions: a warning
 (a lower bound: an account whose old keys were deleted looks younger, never older).
+
+Two more signals, also read from the chain alone:
+
+- **Contract code.** The RPC tells a contract's code hash, not when it last changed, and we use no indexer. So the
+  human pins the hash of each build they checked (`pinnedCode` in `policy.json`; the market's comes from
+  `verify-build.sh`). Any other hash blocks: the code changed since. A contract that still has a full-access key is a
+  warning, since its code can change at any moment. The market has no key at all, so its pin cannot go stale.
+- **Prior interactions.** The agent's own orders with the receiver, from the market contract: runs that were
+  delivered are noted; orders that were never delivered warn; an order on the same NFT still waiting for the runner
+  warns, because paying again buys a second run. A general history of transfers between two accounts would need an
+  indexer; we do not claim it.
 
 Run on testnet (`near/scripts/report-demo.sh`, full log [`near/scripts/report-demo.log`](near/scripts/report-demo.log)),
 after the market was redeployed with `report` (same state, no migration: tx `33mfmJBhadB4gA5CQgT17UJs3BVh6pbxUP1pngF5Gx6M`):
@@ -215,7 +276,7 @@ Requirements: Node 22, and for the contracts Rust with [`cargo-near`](https://gi
    a new attestation with a new nonce on every load.
 3. **Try the holder page.** Open `/holder/4` and sign with a NEAR testnet wallet. Unless you are
    `sirius-ali-bob.testnet`, you see `Refused · <your account> does not hold NFT 4`.
-4. **Run the tests.** `npm test` in `near/agent` (45 tests, some read testnet live) and `cargo test` in
+4. **Run the tests.** `npm test` in `near/agent` (51 tests, some read testnet live) and `cargo test` in
    `near/contracts` (47 market tests, 6 vault tests). Look for `sale_in_the_middle_of_a_payout_pays_the_buyer`,
    `cannot_sell_while_withdrawal_in_flight`, `withdrawal_revokes_listing`, `agent_walks_away_above_its_offer`,
    `live: a replayed report (other nonce) fails the binding checks`, `a sealed dataset opens with the runner key and
@@ -224,11 +285,14 @@ Requirements: Node 22, and for the contracts Rust with [`cargo-near`](https://gi
    `nobody_removes_someone_elses_report_not_even_the_owner`.
 5. **Use it from an agent.** Add the MCP server to any MCP client:
    `{"mcpServers":{"sirius-near":{"command":"node","args":["near/agent/mcp-server.mjs"]}}}`. Tools: `search_datasets`,
-   `get_dataset`, `verify_private_ai`, `check_counterparty`, `report_account`, `get_budget`, `buy_training_run`,
+   `get_dataset`, `verify_private_ai`, `check_counterparty`, `check_account`, `report_account`, `get_budget`, `buy_training_run`,
    `get_receipt`. Read-only tools work as is; `buy_training_run` needs an agent account with a budget (see
    `near/agent/.env.example`). Its limits are in `near/agent/policy.json`, written by the human.
 6. **Check a counterparty.** Call `check_counterparty` with `tokenId: "5"`: `block`, with the reasons. With
-   `tokenId: "4"`: `allow`, since its privacy audit is recorded. With an agent account,
+   `tokenId: "4"`: `allow`, since its privacy audit is recorded. `check_account` takes any account id: try
+   `sirius-ali-mallory.testnet` (`block`), `sirius-ali-market.testnet` (`allow`, locked on its pinned build) or a
+   vault such as `ds-6.sirius-ali-market.testnet`. The same check is a page (`/check`) and a JSON API
+   (`GET /api/check/<account or NFT id>`) on the hosted demo. With an agent account,
    `node --env-file=.env attack-demo.mjs 5 sirius-ali-mallory.testnet` replays the attack demo.
 7. **Run the privacy audit itself.** Put a NEAR AI Cloud key in `near/agent/.env` (`NEARAI_CLOUD_API_KEY=`, from
    <https://cloud.near.ai>), then `node --env-file=.env privacy-audit.mjs ../examples/hospital-stays-fictional.csv --sealed ../examples/hospital-stays-fictional.csv.sealed --token 6 --holder <holder>`.

@@ -56,6 +56,11 @@ test('live: pages render from testnet', async () => {
     assert.equal((await fetch(base + '/dataset/999999')).status, 404);
     const refused = await fetch(base + '/api/holder/3', { method: 'POST', body: JSON.stringify({ signed, nonce: 'nope' }) });
     assert.equal(refused.status, 403);
+    const check = await (await fetch(base + '/api/check/sirius-ali-mallory.testnet')).json();
+    assert.equal(check.verdict, 'block');
+    const page = await (await fetch(base + '/check?account=sirius-ali-market.testnet')).text();
+    assert.match(page, /class="big pass">Allow/);
+    assert.match(await (await fetch(base + '/check?account=%3Cscript%3E')).text(), /Not a NEAR account id/);
   } finally {
     server.close();
   }

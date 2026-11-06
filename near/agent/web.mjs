@@ -15,7 +15,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { checkHolder, issueChallenge } from './lib/gate.mjs';
 import { allOrders, getDataset, listDatasets, MARKET, view, yoctoToNear } from './lib/near.mjs';
 import { attestModel, DEFAULT_MODEL, sha256 } from './lib/nearai.mjs';
-import { decide, gatherSignals, loadPolicy } from './lib/guard.mjs';
+import { decide, decideAccount, gatherAccountSignals, gatherSignals, loadPolicy } from './lib/guard.mjs';
 
 const PORT = Number(process.env.PORT || 4320);
 const LOGO = readFileSync(new URL('./assets/sirius-mark.png', import.meta.url));
@@ -47,8 +47,40 @@ function page(title, body) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)} · Sirius on NEAR</title><link rel="icon" href="/logo.png"><style>${CSS}</style></head><body>
 <header><img src="/logo.png" alt=""><strong>Sirius</strong><span class="pill">NEAR testnet</span>
-<nav><a href="/">Datasets</a><a href="/verified">Verified AI</a><a href="${NEARBLOCKS}/address/${MARKET}" target="_blank" rel="noreferrer">Contract</a></nav></header>
+<nav><a href="/">Datasets</a><a href="/check">Check an account</a><a href="/verified">Verified AI</a><a href="${NEARBLOCKS}/address/${MARKET}" target="_blank" rel="noreferrer">Contract</a></nav></header>
 <main>${body}</main></body></html>`;
+}
+
+const LEVEL_CLASS = { block: 'fail', warn: 'warn', info: 'k' };
+const reasonsTable = (reasons) => (reasons.length
+  ? `<table style="margin-top:12px">${reasons.map((r) => `<tr><td class="${LEVEL_CLASS[r.level] ?? ''}">${esc(r.level)}</td><td>${esc(r.check)}</td><td>${esc(r.detail)}</td></tr>`).join('')}</table>`
+  : '');
+const TONE = { allow: ['verified', 'pass', 'Allow'], warn: ['warned', 'warn', 'Warn: a human approves'], block: ['notverified', 'fail', 'Block'] };
+
+// The counterparty check for any receiver, as a page and as JSON (GET /api/check/<account or token id>)
+const ACCOUNT_ID = /^(\d+|[a-z0-9._-]{2,64})$/;
+async function checkAny(target) {
+  const policy = loadPolicy();
+  if (/^\d+$/.test(target)) return { target, kind: 'dataset NFT', agent: policy.agent, ...decide(await gatherSignals(target, { agent: policy.agent }), policy) };
+  const s = await gatherAccountSignals(target, { agent: policy.agent });
+  return { target, kind: 'account', agent: policy.agent, ...decideAccount(s, policy) };
+}
+
+async function checkPage(target) {
+  const form = `<form method="get" action="/check" style="display:flex;gap:10px;flex-wrap:wrap;margin:0 0 22px"><input name="account" value="${esc(target ?? '')}" placeholder="any-account.testnet or an NFT id" style="flex:1;min-width:240px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:999px;padding:10px 18px;font:inherit"><button>Check</button></form>
+<p class="k">Try <a href="/check?account=sirius-ali-mallory.testnet">sirius-ali-mallory.testnet</a> (reported on-chain), <a href="/check?account=sirius-ali-market.testnet">sirius-ali-market.testnet</a> (locked contract, pinned build), <a href="/check?account=ds-6.sirius-ali-market.testnet">ds-6.sirius-ali-market.testnet</a> (a keyless vault) or <a href="/check?account=5">5</a> (the poisoned NFT). JSON: <span class="mono">GET /api/check/&lt;account&gt;</span>.</p>`;
+  let result = '';
+  if (target) {
+    if (!ACCOUNT_ID.test(target)) result = '<div class="card notverified">Not a NEAR account id.</div>';
+    else {
+      const c = await checkAny(target);
+      result = `<div class="card ${TONE[c.verdict][0]}"><div class="big ${TONE[c.verdict][1]}">${TONE[c.verdict][2]}</div>
+<div class="k">${esc(c.kind)} <span class="mono">${esc(target)}</span>, checked for the agent <span class="mono">${esc(c.agent)}</span> with the policy in <span class="mono">policy.json</span></div>${reasonsTable(c.reasons)}</div>`;
+    }
+  }
+  return page('Check an account', `<h1>Check before paying</h1>
+<p class="lead">An agent asks before it sends funds or calls a contract: allow, warn (a human approves) or block, with the reasons. Signals: on-chain reports with a bond (a trusted reporter blocks), account age and activity from key nonces, contract code against the build the human pinned, whether a full-access key could still replace it, a dataset vault's keys and code, and this agent's earlier orders with the receiver.</p>
+${form}${result}`);
 }
 
 function eventRow(e) {
@@ -99,13 +131,12 @@ async function dataset(id) {
   const media = token?.metadata?.media ?? '';
   const cardImg = media.startsWith('data:image/svg+xml;base64,') ? `<img src="${esc(media)}" alt="NFT card" width="260" height="260" style="border-radius:18px;display:block">` : '';
   const sealedFile = sealedCopy(raw.cid_hash);
-  const sig = await gatherSignals(id).catch(() => null);
+  const sig = await gatherSignals(id, { agent: loadPolicy().agent }).catch(() => null);
   const check = sig ? decide(sig, loadPolicy()) : null;
   const people = Object.entries(sig?.counterparties ?? {}).map(([who, c]) => `<div class="note"><span class="mono">${esc(who)}</span>: ${c.age.known ? `at least ${esc(c.age.days)} days old, ${esc(c.age.transactions)} transaction(s) from its oldest key` : 'age unknown'}, ${c.reports.length} on-chain report(s)</div>`).join('');
-  const tone = { allow: ['verified', 'pass', 'Allow'], warn: ['warned', 'warn', 'Warn: a human approves'], block: ['notverified', 'fail', 'Block'] };
-  const guardCard = check ? `<h2>Before an agent pays</h2><div class="card ${tone[check.verdict][0]}"><div class="big ${tone[check.verdict][1]}">${tone[check.verdict][2]}</div>
+  const guardCard = check ? `<h2>Before an agent pays</h2><div class="card ${TONE[check.verdict][0]}"><div class="big ${TONE[check.verdict][1]}">${TONE[check.verdict][2]}</div>
 <div class="k">counterparty check of an agent with the policy in <span class="mono">policy.json</span> (max ${esc(loadPolicy().maxPricePerOrderNear)} NEAR per order)</div>
-${check.reasons.length ? `<table style="margin-top:12px">${check.reasons.map((r) => `<tr><td class="${r.level === 'block' ? 'fail' : 'warn'}">${esc(r.level)}</td><td>${esc(r.check)}</td><td>${esc(r.detail)}</td></tr>`).join('')}</table>` : '<div class="note">vault keyless and on the market vault code, nobody reported, price within the policy, audit recorded</div>'}
+${reasonsTable(check.reasons)}${check.verdict === 'allow' ? '<div class="note">vault keyless and on the market vault code, nobody reported, price within the policy, audit recorded</div>' : ''}
 <div style="margin-top:10px">${people}</div><div class="note">Reports are bonded transactions in the market contract (<span class="mono">get_reports</span>); a report blocks only when the policy trusts its reporter. Age and activity are read from the accounts' key nonces.</div></div>` : '';
   const mine = orders.filter((o) => o.token_id === id);
   const audit = d.privacyAudit
@@ -209,6 +240,8 @@ export function createApp() {
       if (req.method === 'GET' && url.pathname === '/') return send(200, await home());
       if (req.method === 'GET' && url.pathname === '/logo.png') return send(200, LOGO, 'image/png');
       if (req.method === 'GET' && url.pathname === '/verified') return send(200, await verifiedPage());
+      if (req.method === 'GET' && url.pathname === '/check') return send(200, await checkPage(url.searchParams.get('account')?.trim().toLowerCase() || null));
+      if (req.method === 'GET' && (m = url.pathname.match(/^\/api\/check\/(\d+|[a-z0-9._-]{2,64})$/))) return sendJson(200, await checkAny(m[1]));
       if (req.method === 'GET' && url.pathname === '/api/verified') return sendJson(200, await attestModel(DEFAULT_MODEL, process.env.NEARAI_CLOUD_API_KEY, { signingAlgo: 'ed25519' }));
       if (req.method === 'GET' && (m = url.pathname.match(/^\/dataset\/(\d+)$/))) {
         const html = await dataset(m[1]);

@@ -9,7 +9,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "node --env-file-if-exists=.env --test test/*.test.mjs",
+    "test": "node --env-file-if-exists=.env --test --test-concurrency=1 test/*.test.mjs",
     "audit": "node privacy-audit.mjs",
     "attest": "node privacy-audit.mjs --attest-only"
   },

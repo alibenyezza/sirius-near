@@ -6,7 +6,7 @@
 // allows, send NEAR, or call another contract.
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { MARKET, nearToYocto, provider, view } from './near.mjs';
+import { allOrders, MARKET, nearToYocto, provider, view } from './near.mjs';
 
 const here = (f) => fileURLToPath(new URL(`../${f}`, import.meta.url));
 export const POLICY_FILE = process.env.SIRIUS_POLICY || here('policy.json');
@@ -56,8 +56,57 @@ const INJECTION = [
 ];
 export const injectionHits = (text = '') => INJECTION.filter((re) => re.test(text)).map((re) => text.match(re)[0]);
 
-/** Everything the verdict needs, read from testnet for one dataset NFT. */
-export async function gatherSignals(tokenId, { market = MARKET } = {}) {
+const NO_CODE = '11111111111111111111111111111111';
+const isFullAccess = (k) => k.access_key?.permission === 'FullAccess';
+
+/** What the chain says about one account: does it exist, its code, its keys, its age, the reports on it. */
+export async function accountSignals(accountId, { market = MARKET, head } = {}) {
+  head ??= await chainHead();
+  const [acc, keys, reports] = await Promise.all([
+    provider.viewAccount({ accountId }).catch(() => null),
+    provider.viewAccessKeyList({ accountId }).then((r) => r.keys).catch(() => null),
+    view('get_reports', { account_id: accountId }, market).catch(() => []),
+  ]);
+  const ownCode = acc?.code_hash ?? acc?.codeHash ?? null;
+  const globalCode = acc?.global_contract_hash ?? acc?.globalContractHash ?? acc?.global_contract_account_id ?? null;
+  return {
+    exists: Boolean(acc),
+    code: globalCode ?? (ownCode && ownCode !== NO_CODE ? ownCode : null),
+    keys: { total: keys?.length ?? null, fullAccess: keys ? keys.filter(isFullAccess).length : null },
+    reports,
+    age: ageFromKeys(keys, head),
+  };
+}
+
+// Every order of the market, read once per 30 s (the contract has no list view; they are read one by one).
+let ordersCache = null;
+async function ordersCached() {
+  if (ordersCache && Date.now() - ordersCache.at < 30_000) return ordersCache.orders;
+  ordersCache = { at: Date.now(), orders: await allOrders() };
+  return ordersCache.orders;
+}
+
+/**
+ * What this agent already did with the receiver: its market orders on the given NFTs, sorted into delivered,
+ * refunded (or past their deadline, not delivered) and still pending. `tokenIds = null` means every NFT.
+ */
+export function priorOrders(orders, agent, tokenIds, now = Date.now()) {
+  const ids = tokenIds && new Set(tokenIds.map(String));
+  const out = { agent, delivered: [], refunded: [], pending: [] };
+  for (const o of orders) {
+    if (o.buyer !== agent || (ids && !ids.has(String(o.token_id)))) continue;
+    if (typeof o.status === 'object' && o.status.Delivered) out.delivered.push(o.id);
+    else if (o.status === 'Refunded' || Number(o.deadline_ms) < now) out.refunded.push(o.id);
+    else out.pending.push(o.id);
+  }
+  return out;
+}
+
+const ownedTokens = (accountId, market) => view('nft_tokens_for_owner', { account_id: accountId, from_index: '0', limit: 100 }, market)
+  .then((ts) => ts.map((t) => t.token_id)).catch(() => []);
+
+/** Everything the verdict needs, read from testnet for one dataset NFT. `agent` is who is about to pay. */
+export async function gatherSignals(tokenId, { market = MARKET, agent = process.env.SIRIUS_AGENT_ACCOUNT } = {}) {
   const [token, dataset, config, history] = await Promise.all([
     view('nft_token', { token_id: tokenId }),
     view('get_dataset', { token_id: tokenId }),
@@ -73,18 +122,28 @@ export async function gatherSignals(tokenId, { market = MARKET } = {}) {
   const people = [...new Set([token.owner_id, publisher].filter(Boolean))];
   const head = await chainHead();
   const counterparties = Object.fromEntries(await Promise.all(people.map(async (who) => {
-    const [reports, keys] = await Promise.all([
-      view('get_reports', { account_id: who }, market),
-      provider.viewAccessKeyList({ accountId: who }).then((r) => r.keys).catch(() => null),
-    ]);
-    return [who, { reports, age: ageFromKeys(keys, head) }];
+    const s = await accountSignals(who, { market, head });
+    return [who, { reports: s.reports, age: s.age }];
   })));
+  // the contract the agent calls: its code, and whether anyone could still replace it
+  const marketAccount = await accountSignals(market, { market, head });
+  // prior interactions: this agent's orders on this NFT and on the other NFTs of the same holder
+  let prior = null;
+  if (agent) {
+    const holderTokens = [...new Set([String(tokenId), ...(await ownedTokens(token.owner_id, market))])];
+    const orders = await ordersCached();
+    prior = { holder: priorOrders(orders, agent, holderTokens), thisNft: priorOrders(orders, agent, [tokenId]) };
+  }
   const lastTransfer = history.filter((h) => h.event.Transferred).at(-1);
   const lastPriceChange = history.filter((h) => h.event.PriceChanged).at(-1);
   return {
     tokenId,
     found: true,
     market,
+    marketCode: marketAccount.code,
+    marketFullAccessKeys: marketAccount.keys.fullAccess,
+    agent: agent ?? null,
+    prior,
     holder: token.owner_id,
     publisher,
     counterparties,
@@ -129,19 +188,19 @@ export function decide(signals, policy, offerYocto = null, now = Date.now()) {
   // who gets paid: reports filed on-chain in the market (bonded), and how old and used the account is.
   // A report counts as a block only from a reporter the human trusts; anyone else's report is a warning, so a
   // stranger paying a bond cannot block an honest seller.
-  const trusted = new Set(policy.trustedReporters ?? []);
   for (const [who, c] of Object.entries(signals.counterparties ?? {})) {
     const role = who === signals.holder ? (who === signals.publisher ? 'holder and publisher' : 'holder') : 'publisher';
-    for (const r of c.reports ?? []) {
-      const level = trusted.has(r.reporter) ? 'block' : 'warn';
-      add(level, 'reported', `${role} ${who} was reported on-chain by ${r.reporter}${level === 'warn' ? ' (not a reporter the policy trusts)' : ''}: ${r.reason} (evidence: ${r.evidence})`);
-    }
-    const a = c.age;
-    if (!a?.known) add('warn', 'account age', `${role} ${who}: age unknown (no access key with a nonce to read)`);
-    else {
-      if (policy.minAccountAgeDays && a.days < policy.minAccountAgeDays) add('warn', 'new account', `${role} ${who} is ${a.days} days old (policy: at least ${policy.minAccountAgeDays})`);
-      if (policy.minAccountTransactions && a.transactions < policy.minAccountTransactions) add('warn', 'little activity', `${role} ${who} signed ${a.transactions} transaction(s) with its oldest key (policy: at least ${policy.minAccountTransactions})`);
-    }
+    judgePerson(add, policy, `${role} ${who}`, c);
+  }
+
+  // the contract the agent calls: its code must be the build the human pinned, and nobody should be able to change it
+  if (signals.marketCode !== undefined) judgeCode(add, policy, `market ${signals.market}`, signals.market, signals.marketCode, signals.marketFullAccessKeys);
+
+  // prior interactions between this agent and the receiver
+  if (signals.prior) {
+    const { holder: h, thisNft: t } = signals.prior;
+    if (t.pending.length) add('warn', 'pending order', `order(s) ${t.pending.join(', ')} by ${t.agent} on this NFT still wait for the runner: paying again buys a second run`);
+    judgePrior(add, policy, h, `${signals.holder}'s datasets`);
   }
 
   // price against the human's limits
@@ -168,6 +227,86 @@ export function decide(signals, policy, offerYocto = null, now = Date.now()) {
 }
 
 const fmt = (yocto) => (Number(yocto / 10n ** 18n) / 1e6).toString();
+
+/** Reports on an account and its age. A report blocks only when a reporter the human trusts filed it. */
+function judgePerson(add, policy, label, c, { lockedContract = false } = {}) {
+  const trusted = new Set(policy.trustedReporters ?? []);
+  for (const r of c.reports ?? []) {
+    const level = trusted.has(r.reporter) ? 'block' : 'warn';
+    add(level, 'reported', `${label} was reported on-chain by ${r.reporter}${level === 'warn' ? ' (not a reporter the policy trusts)' : ''}: ${r.reason} (evidence: ${r.evidence})`);
+  }
+  const a = c.age;
+  if (!a?.known) {
+    if (lockedContract) add('info', 'account age', `${label}: no access key, so no nonce to read its age from (a locked contract)`);
+    else add('warn', 'account age', `${label}: age unknown (no access key with a nonce to read)`);
+  } else {
+    if (policy.minAccountAgeDays && a.days < policy.minAccountAgeDays) add('warn', 'new account', `${label} is ${a.days} days old (policy: at least ${policy.minAccountAgeDays})`);
+    if (policy.minAccountTransactions && a.transactions < policy.minAccountTransactions) add('warn', 'little activity', `${label} signed ${a.transactions} transaction(s) with its oldest key (policy: at least ${policy.minAccountTransactions})`);
+  }
+}
+
+/**
+ * A contract's code. Without an indexer the chain cannot say when code last changed, so the human pins the hash of
+ * a build they checked (`pinnedCode` in the policy): any other hash means the code changed since. A full-access key
+ * on a contract means its code can change at any moment.
+ */
+function judgeCode(add, policy, label, accountId, code, fullAccessKeys, expected = null) {
+  const pinned = policy.pinnedCode?.[accountId] ?? expected;
+  if (pinned && code !== pinned) add('block', 'contract code', `${label} runs ${code ?? 'no code'}, not the build the policy pinned (${pinned}): its code changed`);
+  if (fullAccessKeys > 0) add('warn', 'upgradeable', `${label} has ${fullAccessKeys} full-access key(s): its code can be replaced at any time`);
+  else if (pinned && code === pinned) add('info', 'contract code', `${label} runs the pinned build ${pinned} and has no full-access key: the code cannot change`);
+}
+
+/** The agent's past orders with a receiver: undelivered ones are a warning, delivered ones a reassurance. */
+function judgePrior(add, policy, p, what) {
+  if (p.refunded.length && !p.delivered.length) add('warn', 'prior interactions', `${p.agent}: ${p.refunded.length} earlier order(s) on ${what} (${p.refunded.join(', ')}) never delivered, none delivered`);
+  else if (p.delivered.length) add('info', 'prior interactions', `${p.agent}: ${p.delivered.length} earlier run(s) on ${what} delivered (orders ${p.delivered.join(', ')})${p.refunded.length ? `, ${p.refunded.length} not delivered` : ''}`);
+  else add(policy.warnOnFirstInteraction ? 'warn' : 'info', 'prior interactions', `${p.agent} has no earlier order with ${what}: a first interaction`);
+}
+
+/**
+ * The same check for any receiver, not only a dataset NFT: an agent about to send funds or call a contract asks
+ * about the account. Signals: existence, on-chain reports, age and activity, contract code (pinned build, still
+ * upgradeable or not) and this agent's market orders with it.
+ */
+export async function gatherAccountSignals(accountId, { market = MARKET, agent = process.env.SIRIUS_AGENT_ACCOUNT } = {}) {
+  const s = await accountSignals(accountId, { market });
+  // a dataset vault of this market (ds-<id>.<market>): its code must be the vault code the market's config names
+  const vaultToken = accountId.endsWith(`.${market}`) ? accountId.slice(0, -market.length - 1).match(/^ds-(\d+)$/)?.[1] ?? null : null;
+  const expectedCode = vaultToken ? (await view('get_config', {}, market)).vault_code_hash : null;
+  let prior = null;
+  if (agent && s.exists) {
+    const orders = await ordersCached();
+    // the market: every order of this agent; a vault: the orders on its NFT; anyone else: the NFTs it holds
+    prior = priorOrders(orders, agent, accountId === market ? null : vaultToken ? [vaultToken] : await ownedTokens(accountId, market));
+  }
+  return { accountId, market, agent: agent ?? null, ...s, vaultToken, expectedCode, prior };
+}
+
+export function decideAccount(signals, policy) {
+  const reasons = [];
+  const add = (level, check, detail) => reasons.push({ level, check, detail });
+  const id = signals.accountId;
+  if (!signals.exists) {
+    add('block', 'account', `${id} does not exist`);
+    return { verdict: 'block', reasons };
+  }
+  const isContract = Boolean(signals.code);
+  judgePerson(add, policy, id, signals, { lockedContract: isContract && signals.keys.total === 0 });
+  if (signals.vaultToken) {
+    // a vault must be keyless and run the market's vault code, or the money paid to it is not safe
+    if (signals.keys.total !== 0) add('block', 'vault keys', `vault ${id} of NFT ${signals.vaultToken} has ${signals.keys.total ?? 'unknown'} access key(s), expected none`);
+    if (signals.code !== signals.expectedCode) add('block', 'vault code', `vault ${id} runs ${signals.code ?? 'no code'}, the market's vault code is ${signals.expectedCode}`);
+    else add('info', 'vault code', `vault of NFT ${signals.vaultToken}: keyless, runs the market's vault code ${signals.expectedCode}`);
+  } else if (isContract) {
+    judgeCode(add, policy, `contract ${id}`, id, signals.code, signals.keys.fullAccess);
+    if (!policy.pinnedCode?.[id]) add('info', 'contract code', `${id} runs ${signals.code}; the policy pins no build for it, so a code change would go unnoticed`);
+  } else add('info', 'account type', `${id} is a plain account (no contract code)`);
+  const what = id === signals.market ? `the market ${id}` : signals.vaultToken ? `NFT ${signals.vaultToken}` : `the datasets ${id} holds`;
+  if (signals.prior) judgePrior(add, policy, signals.prior, what);
+  const verdict = reasons.some((r) => r.level === 'block') ? 'block' : reasons.some((r) => r.level === 'warn') ? 'warn' : 'allow';
+  return { verdict, reasons };
+}
 
 /** A human approved one purchase (token and maximum offer) after a warning; each approval is used once. */
 export function takeApproval(tokenId, offerYocto) {

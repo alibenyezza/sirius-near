@@ -11,7 +11,30 @@ export const RPC_URL = process.env.NEAR_RPC_URL || 'https://test.rpc.fastnear.co
 export const MARKET = process.env.SIRIUS_MARKET || 'sirius-ali-market.testnet';
 export const EXPLORER = 'https://testnet.nearblocks.io/txns/';
 
-export const provider = new JsonRpcProvider({ url: RPC_URL });
+// Public testnet RPCs rate-limit bursts (HTTP 429). On a 429 only, the call is retried on the next endpoint;
+// any other error (a missing account, a contract panic) is thrown as is. NEAR_RPC_URL pins a single endpoint.
+const RPC_URLS = process.env.NEAR_RPC_URL ? [RPC_URL] : [RPC_URL, 'https://rpc.testnet.near.org', 'https://rpc.testnet.fastnear.com'];
+const rpcs = RPC_URLS.map((url) => new JsonRpcProvider({ url }));
+let current = 0;
+const rateLimited = (e) => e?.cause === 429 || /\b429\b|rate limit/i.test(String(e?.message ?? ''));
+export const provider = new Proxy(rpcs[0], {
+  get(_, prop) {
+    const value = rpcs[current][prop];
+    if (typeof value !== 'function') return value;
+    return async (...args) => {
+      for (let tries = 0; ; tries++) {
+        const rpc = rpcs[current];
+        try {
+          return await rpc[prop](...args);
+        } catch (e) {
+          if (!rateLimited(e) || tries >= 10) throw e;
+          if (rpc === rpcs[current]) current = (current + 1) % rpcs.length;
+          await new Promise((r) => setTimeout(r, 250 * (tries + 1) + Math.random() * 250));
+        }
+      }
+    };
+  },
+});
 
 export async function view(method, args = {}, contractId = MARKET) {
   return provider.callFunction({ contractId, method, args });

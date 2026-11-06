@@ -18,7 +18,7 @@ const result = (r) => r.structuredContent.result;
 test('lists the NEAR tools', async () => {
   const client = await connect();
   const names = (await client.listTools()).tools.map((t) => t.name).sort();
-  assert.deepEqual(names, ['buy_training_run', 'check_counterparty', 'get_budget', 'get_dataset', 'get_receipt', 'report_account', 'search_datasets', 'verify_private_ai']);
+  assert.deepEqual(names, ['buy_training_run', 'check_account', 'check_counterparty', 'get_budget', 'get_dataset', 'get_receipt', 'report_account', 'search_datasets', 'verify_private_ai']);
   const buy = (await client.listTools()).tools.find((t) => t.name === 'buy_training_run');
   assert.equal(buy.annotations.readOnlyHint, false);
 });
@@ -65,4 +65,14 @@ test('check_counterparty reads the live vault of NFT 4: keyless, on the market v
   const r = result(await client.callTool({ name: 'check_counterparty', arguments: { tokenId: '4', offerNear: '0.5' } }));
   assert.notEqual(r.verdict, 'block', JSON.stringify(r.reasons));
   assert.ok(!r.reasons.some((x) => x.check.startsWith('vault')));
+});
+
+test('check_account: the poisoned seller is blocked, the locked market on its pinned build is allowed', async () => {
+  const client = await connect();
+  const mallory = result(await client.callTool({ name: 'check_account', arguments: { accountId: 'sirius-ali-mallory.testnet' } }));
+  assert.equal(mallory.verdict, 'block');
+  assert.ok(mallory.reasons.some((x) => x.check === 'reported' && x.level === 'block'));
+  const market = result(await client.callTool({ name: 'check_account', arguments: { accountId: 'sirius-ali-market.testnet' } }));
+  assert.equal(market.verdict, 'allow', JSON.stringify(market.reasons));
+  assert.ok(market.reasons.some((x) => x.check === 'contract code' && /pinned build/.test(x.detail)));
 });

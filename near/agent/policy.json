@@ -1,5 +1,6 @@
 {
-  "note": "Written by the human who funds the agent. The agent reads it and cannot change it. An on-chain report blocks only when a trusted reporter filed it; any other report, a young account or an unused one is a warning for the human.",
+  "note": "Written by the human who funds the agent. The agent reads it and cannot change it. An on-chain report blocks only when a trusted reporter filed it; any other report, a young account or an unused one is a warning for the human. pinnedCode holds the code hash of contract builds the human checked (verify-build.sh): any other hash blocks.",
+  "agent": "agent.sirius-ali-carol.testnet",
   "market": "sirius-ali-market.testnet",
   "maxPricePerOrderNear": "0.6",
   "allowedProfiles": [
@@ -11,5 +12,9 @@
     "sirius-ali-carol.testnet"
   ],
   "minAccountAgeDays": 3,
-  "minAccountTransactions": 3
+  "minAccountTransactions": 3,
+  "pinnedCode": {
+    "sirius-ali-market.testnet": "EfhH4gTGeR4kG2bRc4ePAFpJFzUnRL7KmssyPa7X2QFT"
+  },
+  "warnOnFirstInteraction": false
 }
