@@ -23,6 +23,7 @@ sleeps when idle, so the first load can take about 50 seconds).
 | `node seal.mjs check ../examples/hospital-stays-fictional.csv.sealed` | `sealed format: yes`, its sha256 `bc5dfed2…f4026c`, and `it cannot be opened here`: only the runner key opens it |
 | `near contract call-function as-read-only sirius-ali-market.testnet get_dataset json-args '{"token_id":"6"}' network-config testnet now` | `cid_hash` = that same sha256, and `privacy_audit` = the hash of the end-to-end encrypted audit ([log](near/scripts/sealed-demo.log)) |
 | `near account list-keys ds-6.sirius-ali-market.testnet network-config testnet now` | no keys: nobody can sign for the NFT's vault |
+| `near account list-keys sirius-ali-market.testnet network-config testnet now` | no keys either: the market is locked, its code (checked by `bash near/scripts/verify-build.sh`, `MATCH`) can never change |
 | `node check.mjs 5` | `BLOCK`: Mallory was **reported on-chain** by Carol (bonded report in the market, with the evidence), plus the policy limits; then the age and activity of the account, read from its key nonces ([log](near/scripts/report-demo.log)) |
 | `npm test` | 45 tests pass (some read testnet live) |
 
@@ -62,7 +63,7 @@ exports exactly the four functions of `near/contracts/vault/src/lib.rs` (`new`, 
 
 | What | Account or id |
 |---|---|
-| Market contract | [`sirius-ali-market.testnet`](https://testnet.nearblocks.io/address/sirius-ali-market.testnet), code hash `EfhH4gTGeR4kG2bRc4ePAFpJFzUnRL7KmssyPa7X2QFT`: rebuilt from this repository in a pinned container (`near/scripts/verify-build.sh`, deploy tx `FjNmQTWiDCMD8L459au1pLVzp7juumC6gA7JaqDGoiSn`) |
+| Market contract | [`sirius-ali-market.testnet`](https://testnet.nearblocks.io/address/sirius-ali-market.testnet), code hash `EfhH4gTGeR4kG2bRc4ePAFpJFzUnRL7KmssyPa7X2QFT`: rebuilt from this repository in a pinned container (`near/scripts/verify-build.sh`, deploy tx `FjNmQTWiDCMD8L459au1pLVzp7juumC6gA7JaqDGoiSn`). **Locked: no access key at all** since tx `GuZAoVk3CvKf9V4UQ1GqDG36cCJfhGXrYqrrtJBYd7nE`, so nobody, the author included, can change this code |
 | Vault code (global, by hash) | `4NdNArHpcvARoBb1Fi7hp8dCKtVQGJNvoTFGrUN5YkBu` (sha256 `321d6034…6afc` of `sirius_vault.wasm`), published in tx `4TVkc5V747qb6vvUSqyeDXVJ2RVK5qYMp797UzsuqRNm` |
 | Demo NFT and its vault | token `4`, vault [`ds-4.sirius-ali-market.testnet`](https://testnet.nearblocks.io/address/ds-4.sirius-ali-market.testnet) |
 | Agent | [`agent.sirius-ali-carol.testnet`](https://testnet.nearblocks.io/address/agent.sirius-ali-carol.testnet): one function-call key only (`order_with_budget` on the market, 0.25 NEAR gas allowance), funded by Carol |
