@@ -6,11 +6,14 @@
 //      MRCONFIGID = 0x01 || compose hash, sha256(app_compose) = compose hash
 //   3. NVIDIA GPU evidence: NRAS JWTs verified against NVIDIA's JWKS, overall result true, eat_nonce = our nonce,
 //      per-GPU secure boot on, debug off, measurements success
-//   4. the same checks for the gateway TEE that terminates TLS
+//   4. the same checks for the gateway TEE that terminates TLS, plus the TLS binding: the quote's report data holds
+//      sha256(signing identity || sha256(SPKI of the gateway's TLS certificate)), and that SPKI is the one of the TLS
+//      connection we talk over; every later reply must arrive over a connection with that same attested key
 //   5. after the completion: sha256 of the exact request and response bytes, signed text, signer recovered from the
 //      ECDSA signature equals the attested signing address
 // Nothing is written to disk or kept in memory after a call returns.
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, X509Certificate } from 'node:crypto';
+import https from 'node:https';
 import { Quote, getCollateralAndVerify } from '@phala/dcap-qvl';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { recoverMessageAddress } from 'viem';
@@ -46,11 +49,44 @@ export async function privateModels() {
   return data.filter((m) => m.owned_by === 'nearai').map((m) => m.id);
 }
 
-export async function fetchAttestation(model, nonce, apiKey, signingAlgo = 'ecdsa') {
+// One kept-alive TLS connection to NEAR AI Cloud. Each response carries the SHA-256 of the SPKI of the certificate
+// it arrived under, so it can be compared with the key the gateway TEE attested.
+const AGENT = new https.Agent({ keepAlive: true, maxSockets: 1 });
+const spkiOf = (socket) => {
+  const raw = socket?.getPeerCertificate?.(false)?.raw;
+  return raw ? sha256(new X509Certificate(raw).publicKey.export({ type: 'spki', format: 'der' })) : null;
+};
+export function nearaiRequest(path, { method = 'GET', headers: h = {}, body } = {}) {
+  const url = new URL(path, NEARAI_BASE_URL);
+  return new Promise((resolve, reject) => {
+    const req = https.request(url, { method, agent: AGENT, headers: body ? { ...h, 'content-length': Buffer.byteLength(body) } : h }, (res) => {
+      const spki = spkiOf(res.socket);
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode, ok: res.statusCode >= 200 && res.statusCode < 300, text: Buffer.concat(chunks).toString('utf8'), spki }));
+      res.on('error', reject);
+    });
+    req.on('error', reject);
+    req.setTimeout(180_000, () => req.destroy(new Error(`NEAR AI Cloud: no answer from ${url.pathname}`)));
+    if (body) req.write(body);
+    req.end();
+  });
+}
+function okText(r, what) {
+  if (r.ok) return r.text;
+  throw new Error(`${what}: HTTP ${r.status}${r.text ? ` ${r.text.slice(0, 300)}` : ''}`);
+}
+
+/** The attestation report, and the SPKI hash of the TLS connection it came over. No API key is sent. */
+export async function fetchAttestationTls(model, nonce, signingAlgo = 'ecdsa') {
   // provider=near and x-no-aliasing: the gateway may not swap the model id or route to another provider's evidence
-  const params = new URLSearchParams({ model, provider: 'near', signing_algo: signingAlgo, include_tls_fingerprint: 'false', nonce });
-  const r = await fetch(`${NEARAI_BASE_URL}/v1/attestation/report?${params}`, { headers: { ...headers(apiKey), 'x-no-aliasing': 'true' } });
-  return (await ok(r, 'attestation report')).json();
+  const params = new URLSearchParams({ model, provider: 'near', signing_algo: signingAlgo, include_tls_fingerprint: 'true', nonce });
+  const r = await nearaiRequest(`/v1/attestation/report?${params}`, { headers: { accept: 'application/json', 'x-no-aliasing': 'true' } });
+  return { report: JSON.parse(okText(r, 'attestation report')), spki: r.spki };
+}
+
+export async function fetchAttestation(model, nonce, _apiKey, signingAlgo = 'ecdsa') {
+  return (await fetchAttestationTls(model, nonce, signingAlgo)).report;
 }
 
 function tdReport(quote) {
@@ -100,8 +136,10 @@ export async function verifyTee(attestation, nonce, label) {
   const address = (attestation.signing_address ?? '').toLowerCase().replace(/^0x/, '');
   const size = { ecdsa: 40, ed25519: 64 }[algo];
   add(`${algo} signing identity has the expected size`, address.length === size, `${address.length / 2} bytes`);
-  const expected = address.padEnd(64, '0') + nonce;
-  add('signing key and nonce bound in TDX report data', hex(td.reportData) === expected, algo === 'ecdsa' ? `0x${address}` : address);
+  // with a TLS fingerprint: sha256(identity || raw fingerprint); without: the identity zero-padded to 32 bytes
+  const fp = (attestation.tls_cert_fingerprint ?? '').toLowerCase();
+  const first = fp ? sha256(Buffer.concat([Buffer.from(address, 'hex'), Buffer.from(fp, 'hex')])) : address.padEnd(64, '0');
+  add(fp ? 'signing key, TLS key and nonce bound in TDX report data' : 'signing key and nonce bound in TDX report data', hex(td.reportData) === first + nonce, algo === 'ecdsa' ? `0x${address}` : address);
   if (attestation.report_data) add('report_data field = report data in the quote', attestation.report_data.toLowerCase().replace(/^0x/, '') === hex(td.reportData), 'gateway field');
   if (algo === 'ed25519' && attestation.signing_public_key !== undefined) {
     add('E2EE public key = attested signing identity', attestation.signing_public_key.toLowerCase() === address, attestation.signing_public_key.slice(0, 16) + '…');
@@ -160,9 +198,17 @@ export async function verifyGpu(nvidiaPayload, nonce, label = 'model') {
 }
 
 /** Full attestation of a model with a fresh nonce: every model TEE node and the gateway. */
-export async function attestModel(model = DEFAULT_MODEL, apiKey = process.env.NEARAI_CLOUD_API_KEY, { signingAlgo = 'ecdsa' } = {}) {
+export async function attestModel(model = DEFAULT_MODEL, _apiKey = process.env.NEARAI_CLOUD_API_KEY, { signingAlgo = 'ecdsa' } = {}) {
   const nonce = generateNonce();
-  const report = await fetchAttestation(model, nonce, apiKey, signingAlgo);
+  const { report, spki } = await fetchAttestationTls(model, nonce, signingAlgo);
+  return { ...(await verifyReport(report, nonce, { model, signingAlgo, observedSpki: spki })), report, observedSpki: spki };
+}
+
+/**
+ * Every check of one attestation report. `observedSpki` is the SPKI hash of the TLS connection the report came over;
+ * without it (re-checking a stored transcript) the TLS binding is still checked inside the quote.
+ */
+export async function verifyReport(report, nonce, { model, signingAlgo = 'ecdsa', observedSpki = null }) {
   const checks = [];
   const nodes = report.model_attestations ?? [];
   checks.push({ tee: 'model', name: `model served by ${nodes.length} attested TEE node(s)`, pass: nodes.length > 0, detail: model });
@@ -172,7 +218,12 @@ export async function attestModel(model = DEFAULT_MODEL, apiKey = process.env.NE
     if (node.nvidia_payload) checks.push(...await verifyGpu(node.nvidia_payload, nonce, label));
     else checks.push({ tee: label, name: 'NVIDIA GPU attestation', pass: false, detail: 'no GPU evidence' });
   }
-  if (report.gateway_attestation) checks.push(...await verifyTee(report.gateway_attestation, nonce, 'gateway'));
+  const gw = report.gateway_attestation;
+  if (gw) {
+    checks.push(...await verifyTee(gw, nonce, 'gateway'));
+    checks.push({ tee: 'gateway', name: 'gateway TLS key attested (tls_cert_fingerprint)', pass: /^[0-9a-f]{64}$/i.test(gw.tls_cert_fingerprint ?? ''), detail: gw.tls_cert_fingerprint?.slice(0, 16) });
+    if (observedSpki !== null) checks.push({ tee: 'gateway', name: 'our TLS connection uses the attested key', pass: observedSpki === gw.tls_cert_fingerprint?.toLowerCase(), detail: observedSpki?.slice(0, 16) });
+  }
   const e2eeKeys = signingAlgo === 'ed25519' ? [...new Set(nodes.map((n) => n.signing_public_key).filter(Boolean))] : [];
   return {
     model,
@@ -184,10 +235,16 @@ export async function attestModel(model = DEFAULT_MODEL, apiKey = process.env.NE
       modelTee: [...new Set(nodes.map((n) => n.signing_address).filter(Boolean))],
       gateway: report.gateway_attestation?.signing_address ? [report.gateway_attestation.signing_address] : [],
     },
+    gatewayTlsSpki: gw?.tls_cert_fingerprint?.toLowerCase() ?? null,
     reportHash: sha256(JSON.stringify(report)),
     checks,
     verified: checks.length > 0 && checks.every((c) => c.pass),
   };
+}
+
+/** A reply is accepted only if it came over a TLS connection whose key the gateway TEE attested. */
+function tlsCheck(r, attestation, what) {
+  return { tee: 'gateway', name: `${what} came over the attested TLS connection`, pass: !!attestation.gatewayTlsSpki && r.spki === attestation.gatewayTlsSpki, detail: r.spki?.slice(0, 16) };
 }
 
 /**
@@ -202,9 +259,9 @@ export async function verifySignedExchange({ apiKey, model, id, requestBody, res
   const algo = attestation.signingAlgo ?? 'ecdsa';
   for (let attempt = 1; attempt <= 5; attempt++) {
     const params = new URLSearchParams({ model, signing_algo: algo });
-    const s = await fetch(`${NEARAI_BASE_URL}/v1/signature/${encodeURIComponent(id)}?${params}`, { headers: headers(apiKey) });
-    if (s.ok) { signature = await s.json(); break; }
-    if (s.status !== 404 || attempt === 5) await ok(s, 'signature');
+    const s = await nearaiRequest(`/v1/signature/${encodeURIComponent(id)}?${params}`, { headers: headers(apiKey) });
+    if (s.ok) { signature = JSON.parse(s.text); break; }
+    if (s.status !== 404 || attempt === 5) okText(s, 'signature');
     await new Promise((res) => setTimeout(res, 1000));
   }
   const parts = signature.text.split(':');
@@ -230,15 +287,12 @@ export async function verifySignedExchange({ apiKey, model, id, requestBody, res
 export async function chatAndVerify({ apiKey, model, messages, attestation, responseFormat }) {
   if (!apiKey) throw new Error('NEARAI_CLOUD_API_KEY is not set');
   const requestBody = JSON.stringify({ model, messages, stream: false, ...(responseFormat ? { response_format: responseFormat } : {}) });
-  const r = await ok(await fetch(`${NEARAI_BASE_URL}/v1/chat/completions`, {
-    method: 'POST',
-    headers: { ...headers(apiKey), 'content-type': 'application/json' },
-    body: requestBody,
-  }), 'chat completion');
-  const responseText = await r.text();
+  const r = await nearaiRequest('/v1/chat/completions', { method: 'POST', headers: { ...headers(apiKey), 'content-type': 'application/json' }, body: requestBody });
+  const responseText = okText(r, 'chat completion');
   const completion = JSON.parse(responseText);
   const signed = await verifySignedExchange({ apiKey, model, id: completion.id, requestBody, responseText, attestation });
-  return { content: completion.choices?.[0]?.message?.content ?? '', chatId: completion.id, ...signed };
+  const checks = [tlsCheck(r, attestation, 'the completion'), ...signed.checks];
+  return { content: completion.choices?.[0]?.message?.content ?? '', chatId: completion.id, ...signed, responseText, checks, verified: checks.every((c) => c.pass) };
 }
 
 export const PRIVACY_FILTER_MODEL = process.env.NEARAI_PRIVACY_MODEL || 'openai/privacy-filter';
@@ -250,15 +304,14 @@ export const PRIVACY_FILTER_MODEL = process.env.NEARAI_PRIVACY_MODEL || 'openai/
 export async function classifyAndVerify({ apiKey, inputs, attestation, model = PRIVACY_FILTER_MODEL }) {
   if (!apiKey) throw new Error('NEARAI_CLOUD_API_KEY is not set');
   const requestBody = JSON.stringify({ model, input: inputs });
-  const r = await ok(await fetch(`${NEARAI_BASE_URL}/v1/privacy/classify`, {
-    method: 'POST',
-    headers: { ...headers(apiKey), 'content-type': 'application/json' },
-    body: requestBody,
-  }), 'privacy classify');
-  const responseText = await r.text();
+  // the sample goes in clear inside TLS here: send it only over the connection whose key the gateway TEE attested
+  if (!attestation.gatewayTlsSpki) throw new Error('privacy classify: the gateway did not attest its TLS key, the sample was not sent');
+  const r = await nearaiRequest('/v1/privacy/classify', { method: 'POST', headers: { ...headers(apiKey), 'content-type': 'application/json' }, body: requestBody });
+  const responseText = okText(r, 'privacy classify');
   const result = JSON.parse(responseText);
   const signed = await verifySignedExchange({ apiKey, model, id: result.id, requestBody, responseText, attestation });
-  return { id: result.id, data: result.data ?? [], ...signed };
+  const checks = [tlsCheck(r, attestation, 'the classify reply'), ...signed.checks];
+  return { id: result.id, data: result.data ?? [], ...signed, responseText, checks, verified: checks.every((c) => c.pass) };
 }
 
 // ── End-to-end encryption (NEAR model E2EE protocol, version 2) ────────────────────────────────────────────────
@@ -302,7 +355,7 @@ export async function chatE2EE({ apiKey, model, messages, attestation, responseF
   const client = e2eeClientKeys();
   const encrypted = messages.map((m) => ({ ...m, content: e2eeEncrypt(m.content, modelKey) }));
   const requestBody = JSON.stringify({ model, messages: encrypted, stream: false, ...(responseFormat ? { response_format: responseFormat } : {}) });
-  const r = await ok(await fetch(`${NEARAI_BASE_URL}/v1/chat/completions`, {
+  const r = await nearaiRequest('/v1/chat/completions', {
     method: 'POST',
     headers: {
       ...headers(apiKey),
@@ -314,8 +367,8 @@ export async function chatE2EE({ apiKey, model, messages, attestation, responseF
       'x-no-aliasing': 'true',
     },
     body: requestBody,
-  }), 'E2EE chat completion');
-  const responseText = await r.text();
+  });
+  const responseText = okText(r, 'E2EE chat completion');
   const completion = JSON.parse(responseText);
   const wire = completion.choices?.[0]?.message?.content ?? '';
   const isHex = /^[0-9a-f]+$/i.test(wire) && wire.length > 112;
@@ -325,5 +378,7 @@ export async function chatE2EE({ apiKey, model, messages, attestation, responseF
     { tee: 'e2ee', name: 'request content encrypted to the attested model key', pass: encrypted.every((m) => /^[0-9a-f]+$/.test(m.content)), detail: modelKey.slice(0, 16) + '…' },
     { tee: 'e2ee', name: 'reply arrived encrypted and opened with our one-time key', pass: isHex, detail: `${wire.length / 2} bytes of ciphertext` },
   ];
-  return { content, chatId: completion.id, e2ee: { modelKey, clientKey: client.publicKeyHex, requestCiphertextBytes: requestBody.length }, ...signed, checks: [...e2ee, ...signed.checks], verified: signed.verified && e2ee.every((c) => c.pass) };
+  // requestBody is ciphertext to the model key and responseText ciphertext to the one-time key: both can be published
+  // (with the one-time secret, so anyone can open the model's reply and check it against the signed hash)
+  return { content, chatId: completion.id, e2ee: { modelKey, clientKey: client.publicKeyHex, requestCiphertextBytes: requestBody.length }, requestBody, responseText, clientSecretHex: Buffer.from(client.x25519Secret).toString('hex'), ...signed, checks: [...e2ee, ...signed.checks], verified: signed.verified && e2ee.every((c) => c.pass) };
 }

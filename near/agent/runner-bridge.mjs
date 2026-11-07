@@ -8,7 +8,7 @@
 //
 // The runner signs `deliver` with a function-call key (market only, `deliver` only), read from the near-cli keychain
 // file in SIRIUS_RUNNER_CREDENTIALS. The model and its certificate are written to near/agent/out/ for the buyer.
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Account, KeyPairSigner, actions, teraToGas } from 'near-api-js';
@@ -16,6 +16,8 @@ import { MARKET, EXPLORER, provider, view } from './lib/near.mjs';
 import { sha256 } from './lib/nearai.mjs';
 import { trainLinearRegression } from './lib/train.mjs';
 import { isSealed, open, loadRunnerKey } from './lib/seal.mjs';
+import { hashFromTranscript } from './lib/audit.mjs';
+import { AUDITS_DIR } from './lib/guard.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const EXAMPLES = join(HERE, '..', 'examples');
@@ -43,7 +45,21 @@ export function findDataset(cidHash, dir = EXAMPLES, runnerKey = null) {
   return null;
 }
 
-export function buildDelivery({ orderId, order, dataset, csv, runnerId, sealed = false, sealKey = null, now = new Date() }) {
+/**
+ * Ties the file the runner opened to the privacy audit in the NFT: the public transcript must recompute the audit hash
+ * recorded on-chain, and the plaintext must be the CSV the TEEs audited (`plaintextHash`, or the dataset hash for a
+ * plain CSV). Returns what goes into the certificate; throws when the file is not the audited one.
+ */
+export function auditBinding(dataset, csv, transcript) {
+  if (!dataset.privacy_audit) return { audited: false };
+  if (!transcript) return { audited: true, transcript: false, auditHash: dataset.privacy_audit.report_hash };
+  const hash = hashFromTranscript(transcript);
+  if (hash !== dataset.privacy_audit.report_hash) throw new Error('the audit transcript does not match the hash recorded in the NFT');
+  if (sha256(csv) !== (transcript.plaintextHash ?? transcript.datasetHash)) throw new Error('this file is not the CSV the privacy audit saw: not training');
+  return { audited: true, transcript: true, auditHash: hash, plaintextIsTheAuditedFile: true };
+}
+
+export function buildDelivery({ orderId, order, dataset, csv, runnerId, sealed = false, sealKey = null, audit = { audited: false }, now = new Date() }) {
   if (order.profile !== 'linear_regression') throw new Error(`Profile ${order.profile} not supported by the local runner`);
   const model = trainLinearRegression(csv.toString('utf8'), { exclude: ['patient_name', 'email', 'phone', 'postcode'] });
   const modelHash = sha256(canonical(model));
@@ -55,6 +71,7 @@ export function buildDelivery({ orderId, order, dataset, csv, runnerId, sealed =
     datasetCidHash: dataset.cid_hash,
     datasetSealed: sealed,
     ...(sealed ? { sealKey, sealFormat: 'SRSEAL01 X25519-HKDF-SHA256-XChaCha20Poly1305' } : {}),
+    privacyAudit: audit,
     profile: order.profile,
     modelHash,
     metrics: model.metrics,
@@ -89,7 +106,14 @@ async function deliver(runner, orderId, order) {
   const dataset = await view('get_dataset', { token_id: order.token_id });
   const local = findDataset(dataset.cid_hash);
   if (!local) return console.log(`order ${orderId}: no local copy of dataset ${order.token_id}, skipped`);
-  const d = buildDelivery({ orderId, order, dataset, csv: local.csv, runnerId: runner.accountId, sealed: local.sealed, sealKey: local.sealKey });
+  const tfile = join(AUDITS_DIR, `${order.token_id}.json`);
+  let audit;
+  try {
+    audit = auditBinding(dataset, local.csv, existsSync(tfile) ? JSON.parse(readFileSync(tfile, 'utf8')) : null);
+  } catch (e) {
+    return console.log(`order ${orderId}: ${e.message}; the buyer gets a refund after the deadline`);
+  }
+  const d = buildDelivery({ orderId, order, dataset, csv: local.csv, runnerId: runner.accountId, sealed: local.sealed, sealKey: local.sealKey, audit });
   const result = await runner.signAndSendTransaction({
     receiverId: MARKET,
     actions: [actions.functionCall('deliver', { order_id: String(orderId), model_hash: d.modelHash, certificate_hash: d.certificateHash }, teraToGas('30'), 0n)],

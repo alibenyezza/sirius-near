@@ -2,23 +2,28 @@
 // Privacy audit of a dataset on NEAR AI Cloud, with the "Verified" panel.
 //
 //   node --env-file=.env privacy-audit.mjs [file.csv] [--sealed <file.csv.sealed>] [--model <id>] [--attest-only]
-//        [--no-e2ee] [--no-filter] [--json] [--token <id> --holder <account>]
+//        [--no-e2ee] [--no-filter] [--json] [--token <id> --holder <account>] [--transcript]
 //
 // Prints every check (Intel TDX, debug off, RTMR3 event log, NVIDIA GPU, key and nonce binding, E2EE, signed reply),
 // the audit, and the near-cli command that records the audit hash in the dataset NFT. Nothing is written to disk.
+// --transcript prints the panel on stderr and only the public transcript (lib/audit.mjs auditTranscript) on stdout,
+// for `> near/audits/<id>.json`: anyone can then re-check the audit with verify-audit.mjs.
 // By default the sample reaches the model end-to-end encrypted to its attested key (see lib/audit.mjs).
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { runAudit } from './lib/audit.mjs';
+import { auditTranscript, runAudit } from './lib/audit.mjs';
 import { attestModel, DEFAULT_MODEL, sha256 } from './lib/nearai.mjs';
 import { MARKET } from './lib/near.mjs';
 
 const args = process.argv.slice(2);
 const opt = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
-const file = args.find((a, i) => !a.startsWith('--') && !args[i - 1]?.startsWith('--'))
+const VALUED = ['--sealed', '--model', '--token', '--holder'];
+const file = args.find((a, i) => !a.startsWith('--') && !VALUED.includes(args[i - 1]))
   ?? fileURLToPath(new URL('../examples/hospital-stays-fictional.csv', import.meta.url));
 const model = opt('--model') ?? DEFAULT_MODEL;
 const e2ee = !args.includes('--no-e2ee');
+const transcript = args.includes('--transcript');
+if (transcript) console.log = (...a) => console.error(...a); // stdout carries the transcript only
 
 function panel(checks) {
   for (const c of checks) console.log(`  ${c.pass ? 'PASS' : 'FAIL'}  [${c.tee}] ${c.name}${c.detail ? `  (${String(c.detail).slice(0, 70)})` : ''}`);
@@ -83,4 +88,5 @@ if (token && r.verified) {
   const holder = opt('--holder') ?? '<holder account>';
   console.log(`\nRecord it in NFT ${token} (holder signs):\n  near contract call-function as-transaction ${MARKET} set_privacy_audit json-args '${JSON.stringify({ token_id: token, report_hash: r.hash, model: r.attestation.model, nonce: r.attestation.nonce })}' prepaid-gas '30 Tgas' attached-deposit '1 yoctoNEAR' sign-as ${holder} network-config testnet sign-with-legacy-keychain send`);
 }
+if (transcript && r.verified) process.stdout.write(`${JSON.stringify(auditTranscript(r, { tokenId: token ?? null }), null, 2)}\n`);
 process.exit(r.verified ? 0 : 1);

@@ -40,7 +40,8 @@ test('live: a replayed report (other nonce) fails the binding checks', async () 
   const checks = await verifyTee(report.model_attestations[0], generateNonce(), 'model');
   const byName = Object.fromEntries(checks.map((c) => [c.name, c.pass]));
   assert.equal(byName['nonce echoed'], false);
-  assert.equal(byName['signing key and nonce bound in TDX report data'], false);
+  const binding = checks.find((c) => /^signing key.* and nonce bound in TDX report data$/.test(c.name));
+  assert.equal(binding?.pass, false, 'the report data binds the other nonce');
   assert.equal(byName['Intel TDX quote signed by Intel, TCB up to date'], true);
 });
 

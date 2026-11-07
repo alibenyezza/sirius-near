@@ -56,10 +56,15 @@ export function compareDetectors(llmPiiColumns, filterFlags) {
   };
 }
 
-/** The hash recorded on-chain: binds the dataset, the nonces, the attestations and both signed exchanges. */
-export function auditHash({ datasetHash, attestation, chat, filter }) {
+/**
+ * The hash recorded on-chain: binds the dataset, the nonces, the attestations and both signed exchanges. When the NFT
+ * records a sealed file, `plaintextHash` (sha256 of the CSV that was audited) is bound too, so the runner can check
+ * that the file it opens is the one the TEEs saw.
+ */
+export function auditHash({ datasetHash, plaintextHash = null, attestation, chat, filter }) {
   return sha256(JSON.stringify({
     datasetHash,
+    ...(plaintextHash ? { plaintextHash } : {}),
     model: attestation.model,
     nonce: attestation.nonce,
     attestationReportHash: attestation.reportHash,
@@ -88,6 +93,7 @@ export function auditHash({ datasetHash, attestation, chat, filter }) {
  * `datasetHash` is what the NFT records: sha256 of the sealed file when there is one, else of the CSV.
  */
 export async function runAudit({ csvText, datasetHash = sha256(csvText), model = DEFAULT_MODEL, apiKey = process.env.NEARAI_CLOUD_API_KEY, rows = SAMPLE_ROWS, e2ee = true, filter: useFilter = true }) {
+  const plaintextHash = datasetHash === sha256(csvText) ? null : sha256(csvText);
   const attestation = await attestModel(model, apiKey, { signingAlgo: e2ee ? 'ed25519' : 'ecdsa' });
   if (!apiKey) {
     return { datasetHash, attestation, chat: null, audit: null, verified: false, reason: 'NEARAI_CLOUD_API_KEY not set: attestation only, no audit run', hash: null };
@@ -108,7 +114,7 @@ export async function runAudit({ csvText, datasetHash = sha256(csvText), model =
 
   // second, independent detector: the privacy filter, in its own attested TEE, sees the same sample column by column
   if (!useFilter) {
-    return { datasetHash, attestation, chat, audit, filter: null, filterAttestation: null, e2ee, verified: attestation.verified && chat.verified, reason: null, hash: auditHash({ datasetHash, attestation, chat, filter: null }) };
+    return { datasetHash, plaintextHash, attestation, chat, audit, filter: null, filterAttestation: null, e2ee, verified: attestation.verified && chat.verified, reason: null, hash: auditHash({ datasetHash, plaintextHash, attestation, chat, filter: null }) };
   }
   const filterAttestation = await attestModel(PRIVACY_FILTER_MODEL, apiKey);
   let filter = null;
@@ -116,8 +122,64 @@ export async function runAudit({ csvText, datasetHash = sha256(csvText), model =
     const { columns, inputs } = columnInputs(csvText, rows);
     const classified = await classifyAndVerify({ apiKey, inputs, attestation: filterAttestation });
     const flags = flaggedColumns(columns, classified.data);
-    filter = { ...classified, attestation: filterAttestation, flags, comparison: compareDetectors(audit.pii_columns, flags) };
+    filter = { ...classified, attestation: filterAttestation, columns, flags, comparison: compareDetectors(audit.pii_columns, flags) };
   }
   const verified = attestation.verified && chat.verified && Boolean(filter?.verified);
-  return { datasetHash, attestation, chat, audit, filter, filterAttestation, e2ee, verified, reason: filter ? null : 'privacy filter attestation failed: the sample was not sent to it', hash: auditHash({ datasetHash, attestation, chat, filter }) };
+  return { datasetHash, plaintextHash, attestation, chat, audit, filter, filterAttestation, e2ee, verified, reason: filter ? null : 'privacy filter attestation failed: the sample was not sent to it', hash: auditHash({ datasetHash, plaintextHash, attestation, chat, filter }) };
+}
+
+/**
+ * The public transcript of an end-to-end encrypted audit: everything needed to recompute the hash in the NFT and to
+ * re-check every proof, and nothing of the data. The model exchange is published as it travelled (the request is
+ * ciphertext to the model's attested key; the reply is ciphertext to a one-time key, published with that one-time
+ * secret so anyone can open the model's verdict and check it against the signed hash). The privacy filter saw the
+ * sample in clear inside TLS, so only its hashes, its signature and the columns it flagged are published.
+ */
+export function auditTranscript(r, { tokenId = null } = {}) {
+  if (!r.verified || !r.e2ee) throw new Error('a transcript needs a verified, end-to-end encrypted audit');
+  const att = (a) => ({ model: a.model, nonce: a.nonce, signingAlgo: a.signingAlgo, report: a.report, observedTlsSpki: a.observedSpki ?? null });
+  return {
+    format: 'sirius-audit-transcript/1',
+    tokenId,
+    hash: r.hash,
+    datasetHash: r.datasetHash,
+    plaintextHash: r.plaintextHash,
+    sampleRows: SAMPLE_ROWS,
+    attestation: att(r.attestation),
+    chat: {
+      requestHash: r.chat.requestHash,
+      responseHash: r.chat.responseHash,
+      signature: { text: r.chat.signature.text, signature: r.chat.signature.signature, kind: r.chat.signature.kind },
+      e2eeModelKey: r.chat.e2ee.modelKey,
+      requestBody: r.chat.requestBody,
+      responseBody: r.chat.responseText,
+      oneTimeSecretHex: r.chat.clientSecretHex,
+    },
+    filter: r.filter && {
+      attestation: att(r.filter.attestation),
+      requestHash: r.filter.requestHash,
+      responseHash: r.filter.responseHash,
+      signature: { text: r.filter.signature.text, signature: r.filter.signature.signature, kind: r.filter.signature.kind },
+      columns: r.filter.columns,
+      flags: r.filter.flags,
+    },
+    verdict: { model: r.audit, filter: r.filter?.flags ?? null, comparison: r.filter?.comparison ?? null },
+  };
+}
+
+/** The hash inputs, rebuilt from a transcript exactly as `auditHash` saw them. */
+export function hashFromTranscript(t) {
+  const att = (a) => ({ model: a.model, nonce: a.nonce, signingAlgo: a.signingAlgo, reportHash: sha256(JSON.stringify(a.report)) });
+  return auditHash({
+    datasetHash: t.datasetHash,
+    plaintextHash: t.plaintextHash,
+    attestation: att(t.attestation),
+    chat: { requestHash: t.chat.requestHash, responseHash: t.chat.responseHash, signature: { signature: t.chat.signature.signature }, e2ee: { modelKey: t.chat.e2eeModelKey } },
+    filter: t.filter && {
+      attestation: att(t.filter.attestation),
+      requestHash: t.filter.requestHash,
+      responseHash: t.filter.responseHash,
+      signature: { signature: t.filter.signature.signature },
+    },
+  });
 }

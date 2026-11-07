@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { buildDelivery, canonical, findDataset } from '../runner-bridge.mjs';
+import { auditBinding, buildDelivery, canonical, findDataset } from '../runner-bridge.mjs';
 import { trainLinearRegression } from '../lib/train.mjs';
 import { sha256 } from '../lib/nearai.mjs';
 
@@ -41,4 +41,13 @@ test('the certificate declares the simulated TEE and hashes the model', () => {
 
 test('refuses profiles the local runner cannot train', () => {
   assert.throws(() => buildDelivery({ orderId: 1, order: { profile: 'logistic_regression' }, dataset: {}, csv, runnerId: 'r' }), /not supported/);
+});
+
+test('the runner trains only the file the privacy audit saw, as the public transcript proves', () => {
+  const t = JSON.parse(readFileSync(new URL('../../audits/6.json', import.meta.url), 'utf8'));
+  const nft6 = { cid_hash: t.datasetHash, privacy_audit: { report_hash: t.hash } };
+  assert.deepEqual(auditBinding(nft6, csv, t), { audited: true, transcript: true, auditHash: t.hash, plaintextIsTheAuditedFile: true });
+  assert.throws(() => auditBinding(nft6, Buffer.from(['patient_name,age', 'someone else,40', ''].join('\n')), t), /not the CSV the privacy audit saw/);
+  assert.throws(() => auditBinding({ ...nft6, privacy_audit: { report_hash: 'ab' } }, csv, t), /does not match the hash recorded/);
+  assert.deepEqual(auditBinding({ cid_hash: 'x' }, csv, null), { audited: false });
 });

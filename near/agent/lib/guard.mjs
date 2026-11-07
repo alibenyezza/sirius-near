@@ -7,9 +7,19 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { allOrders, MARKET, nearToYocto, provider, view } from './near.mjs';
+import { hashFromTranscript } from './audit.mjs';
 
 const here = (f) => fileURLToPath(new URL(`../${f}`, import.meta.url));
 export const POLICY_FILE = process.env.SIRIUS_POLICY || here('policy.json');
+
+// public audit transcripts (privacy-audit.mjs --transcript), one per NFT: <dir>/<token id>.json
+export const AUDITS_DIR = process.env.SIRIUS_AUDITS || here('../audits');
+/** The hash a published transcript recomputes to, or null when this NFT has no transcript (or it does not parse). */
+export function transcriptHash(tokenId, dir = AUDITS_DIR) {
+  const file = `${dir}/${tokenId}.json`;
+  if (!existsSync(file)) return null;
+  try { return hashFromTranscript(JSON.parse(readFileSync(file, 'utf8'))); } catch { return 'unreadable'; }
+}
 
 const readJson = (file, fallback) => (existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : fallback);
 export const loadPolicy = () => readJson(POLICY_FILE, null) ?? (() => { throw new Error(`No policy at ${POLICY_FILE}`); })();
@@ -153,6 +163,7 @@ export async function gatherSignals(tokenId, { market = MARKET, agent = process.
     profile: dataset.profile,
     priceYocto: dataset.price,
     privacyAudit: dataset.privacy_audit ?? null,
+    auditTranscriptHash: transcriptHash(tokenId),
     vault: dataset.vault,
     expectedVault: `ds-${tokenId}.${market}`,
     vaultExists: Boolean(vaultAccount),
@@ -213,7 +224,13 @@ export function decide(signals, policy, offerYocto = null, now = Date.now()) {
   if (policy.allowedProfiles?.length && !policy.allowedProfiles.includes(signals.profile)) add('block', 'profile', `training profile ${signals.profile} is not allowed by the policy`);
 
   // softer signals: a human looks
-  if (!signals.privacyAudit) add(policy.requirePrivacyAudit === 'block' ? 'block' : 'warn', 'privacy audit', 'no privacy audit recorded on this NFT');
+  // the contract stores whatever hash the holder sends: an audit counts only if its public transcript recomputes it
+  const auditLevel = policy.requirePrivacyAudit === 'block' ? 'block' : 'warn';
+  if (!signals.privacyAudit) add(auditLevel, 'privacy audit', 'no privacy audit recorded on this NFT');
+  else if (signals.auditTranscriptHash === undefined) { /* not gathered (offline tests of other rules) */ }
+  else if (!signals.auditTranscriptHash) add(auditLevel, 'privacy audit', 'an audit hash is recorded by the holder, but no public transcript proves it: a claim');
+  else if (signals.auditTranscriptHash !== signals.privacyAudit.report_hash) add('block', 'privacy audit', `the published transcript recomputes to ${signals.auditTranscriptHash}, not the hash recorded in the NFT`);
+  else add('info', 'privacy audit', `the public transcript recomputes the hash in the NFT; node verify-audit.mjs ${signals.tokenId} re-checks every TEE proof`);
   const hits = injectionHits(signals.text);
   if (hits.length) add('warn', 'prompt injection', `the holder's text gives orders to agents: ${hits.map((h) => JSON.stringify(h)).join(', ')}`);
   const freshMin = policy.recentTransferMinutes ?? 0;

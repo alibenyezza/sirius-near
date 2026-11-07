@@ -11,11 +11,12 @@
 //   /verified         "Verified" panel: attests the NEAR AI Cloud model with a fresh nonce, every check listed
 // Nothing is stored: no database, no session, no log of what a visitor sends.
 import { createServer } from 'node:http';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { checkHolder, issueChallenge } from './lib/gate.mjs';
 import { allOrders, getDataset, listDatasets, MARKET, view, yoctoToNear } from './lib/near.mjs';
 import { attestModel, DEFAULT_MODEL, sha256 } from './lib/nearai.mjs';
-import { decide, decideAccount, gatherAccountSignals, gatherSignals, loadPolicy } from './lib/guard.mjs';
+import { AUDITS_DIR, decide, decideAccount, gatherAccountSignals, gatherSignals, loadPolicy, transcriptHash } from './lib/guard.mjs';
 
 const PORT = Number(process.env.PORT || 4320);
 const LOGO = readFileSync(new URL('./assets/sirius-mark.png', import.meta.url));
@@ -139,8 +140,14 @@ async function dataset(id) {
 ${reasonsTable(check.reasons)}${check.verdict === 'allow' ? '<div class="note">vault keyless and on the market vault code, nobody reported, price within the policy, audit recorded</div>' : ''}
 <div style="margin-top:10px">${people}</div><div class="note">Reports are bonded transactions in the market contract (<span class="mono">get_reports</span>); a report blocks only when the policy trusts its reporter. Age and activity are read from the accounts' key nonces.</div></div>` : '';
   const mine = orders.filter((o) => o.token_id === id);
+  // the contract stores the holder's hash; the public transcript is what proves it
+  const th = d.privacyAudit ? transcriptHash(id) : null;
+  const proof = !d.privacyAudit ? '' : th === d.privacyAudit.report_hash
+    ? `<div class="note"><span class="pass">public transcript matches</span> · <a href="/audits/${esc(id)}.json">transcript</a> · re-check every TEE proof: <span class="mono">node verify-audit.mjs ${esc(id)}</span></div>`
+    : th ? '<div class="note"><span class="fail">the published transcript does not match this hash</span></div>'
+      : `<div class="note"><span class="warn">no public transcript: the hash is the holder's claim</span></div>`;
   const audit = d.privacyAudit
-    ? `<div class="card verified"><div class="k">privacy audit on NEAR AI Cloud</div><div class="mono" style="word-break:break-all">${esc(d.privacyAudit.report_hash)}</div><div class="note">model ${esc(d.privacyAudit.model)} · nonce ${esc(d.privacyAudit.nonce.slice(0, 16))}…</div></div>`
+    ? `<div class="card ${th === d.privacyAudit.report_hash ? 'verified' : 'warned'}"><div class="k">privacy audit on NEAR AI Cloud</div><div class="mono" style="word-break:break-all">${esc(d.privacyAudit.report_hash)}</div><div class="note">model ${esc(d.privacyAudit.model)} · nonce ${esc(d.privacyAudit.nonce.slice(0, 16))}…</div>${proof}</div>`
     : `<div class="card"><div class="k">privacy audit</div>not recorded yet · <a href="/verified">see the TEE proof</a></div>`;
   return page(d.title, `<p class="k"><a href="/">Datasets</a> / #${esc(id)}</p><h1>${esc(d.title)}</h1><p class="lead">${esc(d.description)}</p>
 <div class="stats">
@@ -240,6 +247,10 @@ export function createApp() {
       if (req.method === 'GET' && url.pathname === '/') return send(200, await home());
       if (req.method === 'GET' && url.pathname === '/logo.png') return send(200, LOGO, 'image/png');
       if (req.method === 'GET' && url.pathname === '/verified') return send(200, await verifiedPage());
+      if (req.method === 'GET' && (m = url.pathname.match(/^\/audits\/(\d+)\.json$/))) {
+        const f = join(AUDITS_DIR, `${m[1]}.json`);
+        return existsSync(f) ? send(200, readFileSync(f), 'application/json') : send(404, page('Not found', '<h1>No transcript for this NFT</h1>'));
+      }
       if (req.method === 'GET' && url.pathname === '/check') return send(200, await checkPage(url.searchParams.get('account')?.trim().toLowerCase() || null));
       if (req.method === 'GET' && (m = url.pathname.match(/^\/api\/check\/(\d+|[a-z0-9._-]{2,64})$/))) return sendJson(200, await checkAny(m[1]));
       if (req.method === 'GET' && url.pathname === '/api/verified') return sendJson(200, await attestModel(DEFAULT_MODEL, process.env.NEARAI_CLOUD_API_KEY, { signingAlgo: 'ed25519' }));

@@ -166,3 +166,9 @@ test('unreadable reports block (fail closed); a full report list warns', () => {
   assert.equal(checks(v)[0], 'warn:report list full');
   assert.equal(decideAccount({ accountId: 'x.testnet', market: 'm.testnet', exists: true, code: null, keys: { total: 1, fullAccess: 1 }, reports: null, age: seasoned.age }, policy).verdict, 'block');
 });
+
+test('a recorded audit counts only if its public transcript recomputes the hash in the NFT', () => {
+  assert.deepEqual(checks(decide({ ...ok, auditTranscriptHash: 'ab' }, policy, null, now)), ['info:privacy audit']);
+  assert.deepEqual(checks(decide({ ...ok, auditTranscriptHash: null }, policy, null, now)), ['warn:privacy audit']);
+  assert.deepEqual(checks(decide({ ...ok, auditTranscriptHash: 'cd' }, policy, null, now)), ['block:privacy audit']);
+});
