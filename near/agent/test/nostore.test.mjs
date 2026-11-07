@@ -1,17 +1,36 @@
 // "Nothing is kept server-side after a response returns": the code that touches the dataset sample and the TEE
-// replies has no way to write anything. These files may not import a disk, database or cache API at all.
+// replies has no way to write anything. These files, and every local module they import, may not use a disk,
+// database or cache API at all.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { dirname, join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const PRIVATE_PATH = ['privacy-audit.mjs', 'lib/audit.mjs', 'lib/nearai.mjs', 'web.mjs'];
 const WRITES = /\b(writeFile|appendFile|createWriteStream|mkdir|rename|copyFile|localStorage|indexedDB|sqlite|redis|leveldb)\w*/;
+// comments may say "nothing is written": only code counts
+const code = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map((l) => l.replace(/^\s*\/\/.*$/, '')).join('\n');
+const localImports = (src) => [...src.matchAll(/from\s+'(\.{1,2}\/[^']+)'/g)].map((m) => m[1]);
 
-test('the privacy audit, the NEAR AI client and the web server have no way to store anything', () => {
-  for (const file of PRIVATE_PATH) {
-    const src = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
-    // comments may say "nothing is written": only code counts
-    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map((l) => l.replace(/^\s*\/\/.*$/, '')).join('\n');
-    assert.doesNotMatch(code, WRITES, `${file} must not write anything`);
+/** The files and every local module they import, followed to the end. */
+function closure(files) {
+  const seen = new Set();
+  const todo = files.map((f) => join(ROOT, f));
+  while (todo.length) {
+    const file = todo.pop();
+    if (seen.has(file)) continue;
+    seen.add(file);
+    for (const spec of localImports(readFileSync(file, 'utf8'))) todo.push(join(dirname(file), spec));
+  }
+  return [...seen];
+}
+
+test('the privacy audit, the NEAR AI client and the web server, with everything they import, cannot store anything', () => {
+  const files = closure(PRIVATE_PATH);
+  assert.ok(files.length > PRIVATE_PATH.length, 'imports were followed');
+  for (const file of files) {
+    assert.doesNotMatch(code(readFileSync(file, 'utf8')), WRITES, `${relative(ROOT, file)} must not write anything`);
   }
 });

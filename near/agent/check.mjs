@@ -25,9 +25,9 @@ const ageLine = (a) => (a.known ? `at least ${a.days} days old, ${a.transactions
 if (/^\d+$/.test(target)) {
   const signals = await gatherSignals(target, { agent });
   print(`NFT ${target} (agent ${agent})`, decide(signals, policy));
-  for (const [who, c] of Object.entries(signals.counterparties ?? {})) console.log(`  ${who}: ${ageLine(c.age)}, ${c.reports.length} on-chain report(s)`);
+  for (const [who, c] of Object.entries(signals.counterparties ?? {})) console.log(`  ${who}: ${ageLine(c.age)}, ${c.reports?.length ?? "unreadable"} on-chain report(s)`);
 } else {
   const s = await gatherAccountSignals(target, { agent });
   print(`${target} (agent ${agent})`, decideAccount(s, policy));
-  if (s.exists) console.log(`  ${target}: ${s.code ? `contract, code ${s.code}` : 'no contract'}, ${s.keys.total} key(s) (${s.keys.fullAccess} full access), ${ageLine(s.age)}, ${s.reports.length} on-chain report(s)`);
+  if (s.exists) console.log(`  ${target}: ${s.code ? `contract, code ${s.code}` : 'no contract'}, ${s.keys.total} key(s) (${s.keys.fullAccess} full access), ${ageLine(s.age)}, ${s.reports?.length ?? "unreadable"} on-chain report(s)`);
 }

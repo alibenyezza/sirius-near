@@ -155,3 +155,14 @@ test('any account: missing, reported, upgradeable contract, changed code, vault 
   assert.deepEqual(checks(v({ ...vault, keys: { total: 1, fullAccess: 1 } })).filter((c) => c.startsWith('block')), ['block:vault keys']);
   assert.deepEqual(checks(v({ ...vault, code: 'EVIL' })).filter((c) => c.startsWith('block')), ['block:vault code']);
 });
+
+test('unreadable reports block (fail closed); a full report list warns', () => {
+  const unreadable = { ...ok, counterparties: { ...ok.counterparties, 'bob.testnet': { ...seasoned, reports: null } } };
+  assert.deepEqual(checks(decide(unreadable, policy, null, now)), ['block:reports unreadable']);
+  const stranger = { reporter: 'x.testnet', reason: 'r', evidence: 'e' };
+  const full = { ...ok, counterparties: { ...ok.counterparties, 'bob.testnet': { ...seasoned, reports: Array(20).fill(stranger) } } };
+  const v = decide(full, policy, null, now);
+  assert.equal(v.verdict, 'warn');
+  assert.equal(checks(v)[0], 'warn:report list full');
+  assert.equal(decideAccount({ accountId: 'x.testnet', market: 'm.testnet', exists: true, code: null, keys: { total: 1, fullAccess: 1 }, reports: null, age: seasoned.age }, policy).verdict, 'block');
+});

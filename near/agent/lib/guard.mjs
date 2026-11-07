@@ -4,18 +4,19 @@
 // policy a human wrote (`decide`), so it can be tested without a network. The function-call key and the contract
 // stay the last lines of defence: even a guard that says "allow" cannot make the agent pay more than its budget
 // allows, send NEAR, or call another contract.
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { allOrders, MARKET, nearToYocto, provider, view } from './near.mjs';
 
 const here = (f) => fileURLToPath(new URL(`../${f}`, import.meta.url));
 export const POLICY_FILE = process.env.SIRIUS_POLICY || here('policy.json');
-export const APPROVALS_FILE = process.env.SIRIUS_APPROVALS || here('approvals.json');
 
 const readJson = (file, fallback) => (existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : fallback);
 export const loadPolicy = () => readJson(POLICY_FILE, null) ?? (() => { throw new Error(`No policy at ${POLICY_FILE}`); })();
 
 const DAY_MS = 86_400_000;
+// the market keeps at most 20 reports per account (MAX_REPORTS_PER_ACCOUNT); a full list can hide a trusted reporter
+export const MAX_REPORTS_PER_ACCOUNT = 20;
 
 /**
  * How old an account is and how much it was used, read from its access keys. On NEAR a new key starts at nonce
@@ -65,7 +66,8 @@ export async function accountSignals(accountId, { market = MARKET, head } = {}) 
   const [acc, keys, reports] = await Promise.all([
     provider.viewAccount({ accountId }).catch(() => null),
     provider.viewAccessKeyList({ accountId }).then((r) => r.keys).catch(() => null),
-    view('get_reports', { account_id: accountId }, market).catch(() => []),
+    // a failed read is not "no report": null makes the check block until the reports can be read
+    view('get_reports', { account_id: accountId }, market).catch(() => null),
   ]);
   const ownCode = acc?.code_hash ?? acc?.codeHash ?? null;
   const globalCode = acc?.global_contract_hash ?? acc?.globalContractHash ?? acc?.global_contract_account_id ?? null;
@@ -231,6 +233,10 @@ const fmt = (yocto) => (Number(yocto / 10n ** 18n) / 1e6).toString();
 /** Reports on an account and its age. A report blocks only when a reporter the human trusts filed it. */
 function judgePerson(add, policy, label, c, { lockedContract = false } = {}) {
   const trusted = new Set(policy.trustedReporters ?? []);
+  if (!Array.isArray(c.reports)) add('block', 'reports unreadable', `${label}: the on-chain reports could not be read, so a trusted report cannot be ruled out`);
+  else if (c.reports.length >= MAX_REPORTS_PER_ACCOUNT) {
+    add('warn', 'report list full', `${label} has ${c.reports.length} reports, the most the market keeps: nobody else, a trusted reporter included, can add one`);
+  }
   for (const r of c.reports ?? []) {
     const level = trusted.has(r.reporter) ? 'block' : 'warn';
     add(level, 'reported', `${label} was reported on-chain by ${r.reporter}${level === 'warn' ? ' (not a reporter the policy trusts)' : ''}: ${r.reason} (evidence: ${r.evidence})`);
@@ -306,20 +312,4 @@ export function decideAccount(signals, policy) {
   if (signals.prior) judgePrior(add, policy, signals.prior, what);
   const verdict = reasons.some((r) => r.level === 'block') ? 'block' : reasons.some((r) => r.level === 'warn') ? 'warn' : 'allow';
   return { verdict, reasons };
-}
-
-/** A human approved one purchase (token and maximum offer) after a warning; each approval is used once. */
-export function takeApproval(tokenId, offerYocto) {
-  const approvals = readJson(APPROVALS_FILE, []);
-  const i = approvals.findIndex((a) => a.tokenId === String(tokenId) && BigInt(offerYocto) <= BigInt(a.maxOfferYocto));
-  if (i < 0) return null;
-  const [used] = approvals.splice(i, 1);
-  writeFileSync(APPROVALS_FILE, JSON.stringify(approvals, null, 2) + '\n');
-  return used;
-}
-
-export function addApproval(tokenId, maxOfferNear, by) {
-  const approvals = readJson(APPROVALS_FILE, []);
-  approvals.push({ tokenId: String(tokenId), maxOfferYocto: nearToYocto(maxOfferNear), by, at: new Date().toISOString() });
-  writeFileSync(APPROVALS_FILE, JSON.stringify(approvals, null, 2) + '\n');
 }

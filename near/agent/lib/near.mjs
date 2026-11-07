@@ -123,6 +123,24 @@ export async function orderWithBudget(agent, { tokenId, profile, maxPriceNear, d
   return { ok: true, txHash, orderId: value };
 }
 
+/**
+ * Asks the market to refund an undelivered order after its deadline; a budget order goes back to the budget. The
+ * contract accepts this only from the buyer, so the agent's key must allow `refund` next to `order_with_budget`
+ * (no deposit: it cannot move money anywhere but back into the market budget).
+ */
+export async function refundOrder(agent, orderId) {
+  const result = await agent.signAndSendTransaction({
+    receiverId: MARKET,
+    actions: [actions.functionCall('refund', { order_id: String(orderId) }, teraToGas('30'), 0n)],
+    waitUntil: 'FINAL',
+    throwOnFailure: false,
+  });
+  const txHash = result.transaction?.hash ?? result.transaction_outcome?.id;
+  const failure = result.status?.Failure;
+  if (failure) return { ok: false, txHash, error: JSON.stringify(failure).match(/Smart contract panicked: ([^"\\]*)/)?.[1] ?? JSON.stringify(failure).slice(0, 300) };
+  return { ok: true, txHash };
+}
+
 /** Receipt of an order: what was bought, from whom, at what price, and what the runner delivered. */
 export async function receipt(orderId, txHash) {
   const order = await view('get_order', { order_id: String(orderId) });

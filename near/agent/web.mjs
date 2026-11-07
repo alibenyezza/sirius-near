@@ -133,7 +133,7 @@ async function dataset(id) {
   const sealedFile = sealedCopy(raw.cid_hash);
   const sig = await gatherSignals(id, { agent: loadPolicy().agent }).catch(() => null);
   const check = sig ? decide(sig, loadPolicy()) : null;
-  const people = Object.entries(sig?.counterparties ?? {}).map(([who, c]) => `<div class="note"><span class="mono">${esc(who)}</span>: ${c.age.known ? `at least ${esc(c.age.days)} days old, ${esc(c.age.transactions)} transaction(s) from its oldest key` : 'age unknown'}, ${c.reports.length} on-chain report(s)</div>`).join('');
+  const people = Object.entries(sig?.counterparties ?? {}).map(([who, c]) => `<div class="note"><span class="mono">${esc(who)}</span>: ${c.age.known ? `at least ${esc(c.age.days)} days old, ${esc(c.age.transactions)} transaction(s) from its oldest key` : 'age unknown'}, ${c.reports?.length ?? "unreadable"} on-chain report(s)</div>`).join('');
   const guardCard = check ? `<h2>Before an agent pays</h2><div class="card ${TONE[check.verdict][0]}"><div class="big ${TONE[check.verdict][1]}">${TONE[check.verdict][2]}</div>
 <div class="k">counterparty check of an agent with the policy in <span class="mono">policy.json</span> (max ${esc(loadPolicy().maxPricePerOrderNear)} NEAR per order)</div>
 ${reasonsTable(check.reasons)}${check.verdict === 'allow' ? '<div class="note">vault keyless and on the market vault code, nobody reported, price within the policy, audit recorded</div>' : ''}

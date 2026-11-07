@@ -1,0 +1,12 @@
+# refund demo 2026-11-07 00:00:02 UTC on sirius-ali-market.testnet
+
+== order 1 before: {"amount":"500000000000000000000000","buyer":"sirius-ali-carol.testnet","deadline_ms":"1793415171673","profile":"linear_regression","status":"Paid","token_id":"1"}
+   refund: Transaction ID: BQ8BXSZ9aajyh5LF8mrcAsimYzvuzsgD3dPzDSpQxv1L
+   order 1 after: {"amount":"500000000000000000000000","buyer":"sirius-ali-carol.testnet","deadline_ms":"1793415171673","profile":"linear_regression","status":"Refunded","token_id":"1"}
+
+== order 3 before: {"amount":"500000000000000000000000","buyer":"sirius-ali-carol.testnet","deadline_ms":"1793415249913","profile":"linear_regression","status":"Paid","token_id":"2"}
+   refund: Transaction ID: 8y1GGecFMhcywXWqNLgCGQB5rjdVpueYDNLGC123EhJe
+   order 3 after: {"amount":"500000000000000000000000","buyer":"sirius-ali-carol.testnet","deadline_ms":"1793415249913","profile":"linear_regression","status":"Refunded","token_id":"2"}
+
+== a second refund of order 1 is refused
+   Transaction ID: DRXA51xxDL66XJyoZwz5UMYHqZPjURNrAEiF8es9Zdgr Smart contract panicked: Only a paid, undelivered order can be refunded

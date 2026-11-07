@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Creates an agent account whose only key is a function-call GAS KEY (NEP-611, nearcore 2.13): market only,
-// `order_with_budget` only, with its own prepaid gas balance. The funder pays everything in one transaction, then
+// `order_with_budget` and `refund` only (no deposit), with its own prepaid gas balance. The funder pays everything in one transaction, then
 // gives the agent a budget in the market.
 //
 //   node gas-key-setup.mjs <new agent account> <funder account> <funder keychain file> <keychain dir for the new key>
@@ -41,7 +41,8 @@ const created = await funder.signAndSendTransaction({
   actions: [
     actions.createAccount(),
     actions.transfer(BigInt(nearToYocto(ACCOUNT_BALANCE))),
-    actions.addFunctionCallGasKey(publicKey, MARKET, ['order_with_budget'], NONCE_LANES),
+    // `refund` too: the market accepts a refund only from the buyer, so without it an undelivered order stays stuck
+    actions.addFunctionCallGasKey(publicKey, MARKET, ['order_with_budget', 'refund'], NONCE_LANES),
     actions.transferToGasKey(publicKey, BigInt(nearToYocto(GAS_KEY_BALANCE))),
   ],
   waitUntil: 'FINAL',
