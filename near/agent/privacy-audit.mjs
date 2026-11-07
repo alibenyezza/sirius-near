@@ -41,8 +41,9 @@ if (args.includes('--attest-only')) {
 }
 
 const sealedFile = opt('--sealed');
+const csvText = readFileSync(file, 'utf8');
 const r = await runAudit({
-  csvText: readFileSync(file, 'utf8'),
+  csvText,
   ...(sealedFile ? { datasetHash: sha256(readFileSync(sealedFile)) } : {}),
   model,
   e2ee,
@@ -65,6 +66,7 @@ if (!r.audit) {
 }
 console.log(`\nVerdict: ${r.audit.verdict}`);
 for (const p of r.audit.pii_columns) console.log(`  personal data: ${p.column} (${p.kind}) ${p.why}`);
+console.log(`  sensitive columns (trained on inside the enclave, never published): ${(r.audit.sensitive_columns ?? []).join(', ') || '-'}`);
 console.log(`  safe columns: ${(r.audit.safe_columns ?? []).join(', ')}`);
 console.log(`\nPublic card: ${r.audit.public_card?.title}\n  ${r.audit.public_card?.summary}`);
 if (r.filterAttestation) {
@@ -88,5 +90,5 @@ if (token && r.verified) {
   const holder = opt('--holder') ?? '<holder account>';
   console.log(`\nRecord it in NFT ${token} (holder signs):\n  near contract call-function as-transaction ${MARKET} set_privacy_audit json-args '${JSON.stringify({ token_id: token, report_hash: r.hash, model: r.attestation.model, nonce: r.attestation.nonce })}' prepaid-gas '30 Tgas' attached-deposit '1 yoctoNEAR' sign-as ${holder} network-config testnet sign-with-legacy-keychain send`);
 }
-if (transcript && r.verified) process.stdout.write(`${JSON.stringify(auditTranscript(r, { tokenId: token ?? null }), null, 2)}\n`);
+if (transcript && r.verified) process.stdout.write(`${JSON.stringify(auditTranscript(r, { tokenId: token ?? null, csvText, runnerPubHex: readFileSync(new URL('./runner-seal.pub', import.meta.url), 'utf8').trim() }), null, 2)}\n`);
 process.exit(r.verified ? 0 : 1);

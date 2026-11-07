@@ -20,14 +20,14 @@ sleeps when idle, so the first load can take about 50 seconds).
 |---|---|
 | Open <https://sirius-near.onrender.com/dataset/6> | the sealed NFT: its keyless vault, the card the contract draws, the recorded audit, `Allow`; `/dataset/5` shows `Block` for the poisoned NFT; `/verified` attests NEAR AI Cloud with a fresh nonce on every load |
 | `cd near/agent && npm ci && node privacy-audit.mjs --attest-only --e2ee` | 25 to 50 `PASS` lines (one block per GPU serving the model) for the model TEE and the gateway TEE: Intel TDX quote (dcap-qvl), debug off, RTMR3 event-log replay, MRCONFIGID, NVIDIA GPUs, the **Ed25519 E2EE key bound in the quote with your nonce**, and the gateway's **TLS key bound in its quote and equal to the key of your connection**; then `VERIFIED` |
-| `node verify-audit.mjs 6` | the privacy audit recorded in NFT 6, re-checked from its public transcript ([`near/audits/6.json`](near/audits/6.json)) with no key and no data: the hash recomputes and matches the NFT, every TEE proof re-verified, the model's Ed25519 signature, its verdict opened with the published one-time key, the filter's gateway signature; `VERIFIED: 116 checks passed` (NFT 4: 94) |
+| `node verify-audit.mjs 6` | the privacy audit recorded in NFT 6, re-checked from its public transcript ([`near/audits/6.json`](near/audits/6.json)) with no key and no data: the hash recomputes and matches the NFT, every TEE proof re-verified, the model's Ed25519 signature, its verdict opened with the published one-time key, the filter's gateway signature; `VERIFIED: 114 checks passed` (NFT 4 too). Add `--csv ../examples/hospital-stays-fictional.csv` (and `--sealed …csv.sealed` for NFT 6) to also check that the files are the audited ones, that nothing the published key opens quotes the sample, and that the filter received the sample of this CSV: 118 (NFT 4: 117) |
 | `node seal.mjs check ../examples/hospital-stays-fictional.csv.sealed` | `sealed format: yes`, its sha256 `bc5dfed2…f4026c`, and `it cannot be opened here`: only the runner key opens it |
 | `near contract call-function as-read-only sirius-ali-market.testnet get_dataset json-args '{"token_id":"6"}' network-config testnet now` | `cid_hash` = that same sha256, and `privacy_audit` = the hash of the end-to-end encrypted audit ([log](near/scripts/sealed-demo.log)) |
 | `near account list-keys ds-6.sirius-ali-market.testnet network-config testnet now` | no keys: nobody can sign for the NFT's vault |
 | `near account list-keys sirius-ali-market.testnet network-config testnet now` | no keys either: the market is locked, its code (checked by `bash near/scripts/verify-build.sh`, `MATCH`) can never change |
 | `node check.mjs 5` | `BLOCK`: Mallory was **reported on-chain** by Carol (bonded report in the market, with the evidence), plus the policy limits; then the age and activity of the account, read from its key nonces ([log](near/scripts/report-demo.log)) |
 | `node check.mjs sirius-ali-market.testnet` (any account works), or <https://sirius-near.onrender.com/check> | `ALLOW`: a contract on the build pinned in `policy.json`, with no full-access key, so its code cannot change; and this agent's earlier orders there |
-| `npm test` | 59 tests pass, in under 3 minutes (some read testnet live; the test files run one after another so the public RPC does not throttle them) |
+| `npm test` | 63 tests pass (one is skipped on machines without the runner key), in under 3 minutes (some read testnet live; the test files run one after another so the public RPC does not throttle them) |
 
 No near-cli? `node check.mjs <account>` also prints an account's keys and code hash (`node check.mjs
 sirius-ali-market.testnet`: `0 key(s)`), and any view works over plain RPC, for example
@@ -181,7 +181,21 @@ recompute the hash and re-check the proofs, and nothing of the data:
   signed hash;
 - for the privacy filter, which saw the sample in clear inside TLS: only the hashes, the gateway's signature and the
   columns it flagged;
-- since NFT 6 records the sealed file, the sha256 of the CSV that was audited (`plaintextHash`), bound in the hash.
+- since NFT 6 records the sealed file, the sha256 of the CSV that was audited (`plaintextHash`), bound in the hash;
+- the model's per-message E2EE secrets, sealed to the runner's key (`sampleProof`): the runner re-encrypts the sample
+  of the file it opens and compares it byte for byte with the request the model TEE signed, so the audited sample is
+  proven to come from that file. The filter's request needs no secret: anyone rebuilds it from the CSV and compares
+  its hash.
+
+The audit model runs with its reasoning off (`enable_thinking: false`), so its reply is the verdict only, and a
+transcript is written only if nothing the one-time key opens quotes a cell of the sample. An earlier transcript of
+7 Nov did not meet that: the published key also opened the model's chain of thought, which quoted a (fictional)
+postcode. Those two audits were replaced by the ones below, and a test now decrypts every field of the reply.
+
+The verdict is used, not only recorded: the model separates identifiers (removed before any training) from sensitive
+measurements (what the model learns from, inside the enclave). The check notes the identifiers, blocks a
+`not_publishable` verdict, and the runner leaves out of training every column either detector flagged. It refuses to
+train when an audit hash is recorded but no transcript proves it, or when the file is not the audited one.
 
 `node verify-audit.mjs <id>` (no key, no wallet) recomputes the hash, compares it with the NFT, re-verifies every Intel
 and NVIDIA proof with the audit's own nonces, checks the Ed25519 signature of the model and the ECDSA signature of the
@@ -192,10 +206,11 @@ either transcript.
 
 | Step | Result | Transaction |
 |---|---|---|
-| New audit of NFT 6 with its transcript ([`near/audits/6.json`](near/audits/6.json), panel [`6.panel.txt`](near/audits/6.panel.txt)): E2EE to the model key, privacy filter over the attested TLS key; both flag `patient_name`, `email`, `phone`, `postcode` | audit hash `47b3bb51…787115` | (off-chain, TEE) |
-| Alice records it in NFT 6 | `node verify-audit.mjs 6`: `VERIFIED: 116 checks passed` | `BLkLk9Wu2vPN9Hvb99bfeVThy69Q4H3owpBxPVQBYbYj` |
-| New audit of NFT 4 (plain CSV) with its transcript ([`near/audits/4.json`](near/audits/4.json)) | audit hash `9d5a56ff…478b98` | (off-chain, TEE) |
-| Bob records it in NFT 4 | `node verify-audit.mjs 4`: `VERIFIED: 94 checks passed` | `FCNVV3DTddJu7uNZF3YmQUPqsga3MgTUrVgYbNp1fuda` |
+| New audit of NFT 6 with its transcript ([`near/audits/6.json`](near/audits/6.json), panel [`6.panel.txt`](near/audits/6.panel.txt)): E2EE to the model key, reasoning off, privacy filter over the pinned TLS key; both flag `patient_name`, `email`, `phone`, `postcode`; verdict `publishable_after_removing_pii`, sensitive columns `age`, `bmi`, `smoker`, `prior_visits`, `length_of_stay_days` | audit hash `674f4156…bc6858` | (off-chain, TEE) |
+| Alice records it in NFT 6 | `node verify-audit.mjs 6`: `VERIFIED: 114 checks passed` | `8ksQp2Do8LJYcXX1ttMs1J2wuGEJPVyTavzsSBb4XM7v` |
+| New audit of NFT 4 (plain CSV) with its transcript ([`near/audits/4.json`](near/audits/4.json)), same verdict | audit hash `44e13169…6eb4cd` | (off-chain, TEE) |
+| Bob records it in NFT 4 | `node verify-audit.mjs 4`: `VERIFIED: 114 checks passed` | `3K9hook7GBkGCszcX1a4PsxtSPKYwos8VdJqH68UGejT` |
+| (replaced: the first transcripts of 7 Nov, which let the published key open the model's reasoning) | `47b3bb51…`, `9d5a56ff…`, `1c2bc8fb…`, `a55e51d9…` | `BLkLk9Wu…`, `FCNVV3DT…`, `EFGFqcu4…`, `Fge9rCob…` |
 
 ### Attack demo: a prompt-injected agent
 
@@ -324,7 +339,7 @@ Requirements: Node 22, and for the contracts Rust with [`cargo-near`](https://gi
    a new attestation with a new nonce on every load.
 3. **Try the holder page.** Open `/holder/4` and sign with a NEAR testnet wallet. Unless you are
    `sirius-ali-bob.testnet`, you see `Refused · <your account> does not hold NFT 4`.
-4. **Run the tests.** `npm test` in `near/agent` (59 tests, some read testnet live) and `cargo test` in
+4. **Run the tests.** `npm test` in `near/agent` (63 tests, some read testnet live) and `cargo test` in
    `near/contracts` (47 market tests, 6 vault tests). Look for `sale_in_the_middle_of_a_payout_pays_the_buyer`,
    `cannot_sell_while_withdrawal_in_flight`, `withdrawal_revokes_listing`, `agent_walks_away_above_its_offer`,
    `live: a replayed report (other nonce) fails the binding checks`, `a sealed dataset opens with the runner key and

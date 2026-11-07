@@ -14,6 +14,7 @@
 // Nothing is written to disk or kept in memory after a call returns.
 import { createHash, randomBytes, X509Certificate } from 'node:crypto';
 import https from 'node:https';
+import tls from 'node:tls';
 import { Quote, getCollateralAndVerify } from '@phala/dcap-qvl';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { recoverMessageAddress } from 'viem';
@@ -56,10 +57,21 @@ const spkiOf = (socket) => {
   const raw = socket?.getPeerCertificate?.(false)?.raw;
   return raw ? sha256(new X509Certificate(raw).publicKey.export({ type: 'spki', format: 'der' })) : null;
 };
-export function nearaiRequest(path, { method = 'GET', headers: h = {}, body } = {}) {
+const spkiOfRaw = (raw) => sha256(new X509Certificate(raw).publicKey.export({ type: 'spki', format: 'der' }));
+/**
+ * A fresh connection that only completes its TLS handshake if the server's key is `spki` (the key the gateway TEE
+ * attested): with any other key the handshake fails and nothing, the request included, is sent.
+ */
+const pinnedAgent = (spki) => new https.Agent({
+  keepAlive: false,
+  checkServerIdentity: (host, cert) => tls.checkServerIdentity(host, cert)
+    ?? (spkiOfRaw(cert.raw) === spki ? undefined : new Error(`TLS key ${spkiOfRaw(cert.raw).slice(0, 16)}… is not the key the gateway TEE attested`)),
+});
+export function nearaiRequest(path, { method = 'GET', headers: h = {}, body, pinSpki = null } = {}) {
   const url = new URL(path, NEARAI_BASE_URL);
   return new Promise((resolve, reject) => {
-    const req = https.request(url, { method, agent: AGENT, headers: body ? { ...h, 'content-length': Buffer.byteLength(body) } : h }, (res) => {
+    const agent = pinSpki ? pinnedAgent(pinSpki) : AGENT;
+    const req = https.request(url, { method, agent, headers: body ? { ...h, 'content-length': Buffer.byteLength(body) } : h }, (res) => {
       const spki = spkiOf(res.socket);
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
@@ -287,7 +299,8 @@ export async function verifySignedExchange({ apiKey, model, id, requestBody, res
 export async function chatAndVerify({ apiKey, model, messages, attestation, responseFormat }) {
   if (!apiKey) throw new Error('NEARAI_CLOUD_API_KEY is not set');
   const requestBody = JSON.stringify({ model, messages, stream: false, ...(responseFormat ? { response_format: responseFormat } : {}) });
-  const r = await nearaiRequest('/v1/chat/completions', { method: 'POST', headers: { ...headers(apiKey), 'content-type': 'application/json' }, body: requestBody });
+  if (!attestation.gatewayTlsSpki) throw new Error('chat completion: the gateway did not attest its TLS key, nothing was sent');
+  const r = await nearaiRequest('/v1/chat/completions', { method: 'POST', headers: { ...headers(apiKey), 'content-type': 'application/json' }, body: requestBody, pinSpki: attestation.gatewayTlsSpki });
   const responseText = okText(r, 'chat completion');
   const completion = JSON.parse(responseText);
   const signed = await verifySignedExchange({ apiKey, model, id: completion.id, requestBody, responseText, attestation });
@@ -306,7 +319,7 @@ export async function classifyAndVerify({ apiKey, inputs, attestation, model = P
   const requestBody = JSON.stringify({ model, input: inputs });
   // the sample goes in clear inside TLS here: send it only over the connection whose key the gateway TEE attested
   if (!attestation.gatewayTlsSpki) throw new Error('privacy classify: the gateway did not attest its TLS key, the sample was not sent');
-  const r = await nearaiRequest('/v1/privacy/classify', { method: 'POST', headers: { ...headers(apiKey), 'content-type': 'application/json' }, body: requestBody });
+  const r = await nearaiRequest('/v1/privacy/classify', { method: 'POST', headers: { ...headers(apiKey), 'content-type': 'application/json' }, body: requestBody, pinSpki: attestation.gatewayTlsSpki });
   const responseText = okText(r, 'privacy classify');
   const result = JSON.parse(responseText);
   const signed = await verifySignedExchange({ apiKey, model, id: result.id, requestBody, responseText, attestation });
@@ -321,11 +334,12 @@ export async function classifyAndVerify({ apiKey, inputs, attestation, model = P
 // wire format [ephemeral public key 32][nonce 24][ciphertext + tag].
 const E2EE_INFO = 'ed25519_encryption';
 
-export function e2eeEncrypt(plaintext, recipientEd25519PubHex) {
+/** `secrets` ({ ephemeralHex, nonceHex }) makes it deterministic: the same inputs give the same ciphertext. */
+export function e2eeEncrypt(plaintext, recipientEd25519PubHex, secrets = null) {
   const recipient = edwardsToMontgomeryPub(Buffer.from(recipientEd25519PubHex, 'hex'));
-  const ephemeral = x25519.utils.randomPrivateKey();
+  const ephemeral = secrets ? Buffer.from(secrets.ephemeralHex, 'hex') : x25519.utils.randomPrivateKey();
   const key = hkdf(sha256Bytes, x25519.getSharedSecret(ephemeral, recipient), undefined, E2EE_INFO, 32);
-  const nonce = randomBytes(24);
+  const nonce = secrets ? Buffer.from(secrets.nonceHex, 'hex') : randomBytes(24);
   const ct = xchacha20poly1305(key, nonce).encrypt(Buffer.from(plaintext, 'utf8'));
   return Buffer.concat([x25519.getPublicKey(ephemeral), nonce, ct]).toString('hex');
 }
@@ -347,14 +361,16 @@ export function e2eeClientKeys() {
  * attestModel(model, key, { signingAlgo: 'ed25519' }) and be fully verified: the key we encrypt to is the one the
  * quote binds. Returns the decrypted content; the plaintext request and reply exist only in this process.
  */
-export async function chatE2EE({ apiKey, model, messages, attestation, responseFormat }) {
+export async function chatE2EE({ apiKey, model, messages, attestation, responseFormat, extra = {} }) {
   if (!apiKey) throw new Error('NEARAI_CLOUD_API_KEY is not set');
   if (attestation.signingAlgo !== 'ed25519' || !attestation.verified) throw new Error('E2EE needs a verified ed25519 attestation');
   if (attestation.e2eeKeys.length !== 1) throw new Error(`E2EE needs exactly one attested model key, got ${attestation.e2eeKeys.length}`);
   const [modelKey] = attestation.e2eeKeys;
   const client = e2eeClientKeys();
-  const encrypted = messages.map((m) => ({ ...m, content: e2eeEncrypt(m.content, modelKey) }));
-  const requestBody = JSON.stringify({ model, messages: encrypted, stream: false, ...(responseFormat ? { response_format: responseFormat } : {}) });
+  // the per-message secrets are kept so the audit can seal them to the runner, who re-encrypts its own sample
+  const secrets = messages.map(() => ({ ephemeralHex: Buffer.from(x25519.utils.randomPrivateKey()).toString('hex'), nonceHex: randomBytes(24).toString('hex') }));
+  const encrypted = messages.map((m, i) => ({ ...m, content: e2eeEncrypt(m.content, modelKey, secrets[i]) }));
+  const requestBody = JSON.stringify({ model, messages: encrypted, stream: false, ...(responseFormat ? { response_format: responseFormat } : {}), ...extra });
   const r = await nearaiRequest('/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -380,5 +396,5 @@ export async function chatE2EE({ apiKey, model, messages, attestation, responseF
   ];
   // requestBody is ciphertext to the model key and responseText ciphertext to the one-time key: both can be published
   // (with the one-time secret, so anyone can open the model's reply and check it against the signed hash)
-  return { content, chatId: completion.id, e2ee: { modelKey, clientKey: client.publicKeyHex, requestCiphertextBytes: requestBody.length }, requestBody, responseText, clientSecretHex: Buffer.from(client.x25519Secret).toString('hex'), ...signed, checks: [...e2ee, ...signed.checks], verified: signed.verified && e2ee.every((c) => c.pass) };
+  return { content, chatId: completion.id, e2ee: { modelKey, clientKey: client.publicKeyHex, requestCiphertextBytes: requestBody.length }, requestBody, responseText, messageSecrets: secrets, clientSecretHex: Buffer.from(client.x25519Secret).toString('hex'), ...signed, checks: [...e2ee, ...signed.checks], verified: signed.verified && e2ee.every((c) => c.pass) };
 }

@@ -141,6 +141,9 @@ export function createServer({ agentLoader = loadAgent, guard = defaultGuard } =
     if (order.buyer !== agent.accountId) return fail(`Order ${orderId} was bought by ${order.buyer}, not by this agent`);
     if (order.status !== 'Paid') return fail(`Order ${orderId} is ${typeof order.status === 'object' ? 'Delivered' : order.status}: nothing to refund`);
     if (Number(order.deadline_ms) >= Date.now()) return fail(`Order ${orderId} is still within its deadline (${new Date(Number(order.deadline_ms)).toISOString()})`);
+    // a budget order goes back to the budget: if it was closed, a refund fails, or lands in a budget someone else opened
+    const budget = await view('get_agent_budget', { agent_id: agent.accountId });
+    if (!budget) return fail(`This agent's budget is closed: order ${orderId} cannot be refunded into it (a new budget could belong to another funder)`);
     try {
       const r = await refundOrder(agent, orderId);
       return r.ok ? json({ refunded: true, orderId, tx: r.txHash, receipt: await receipt(orderId, r.txHash) }) : json({ refunded: false, orderId, reason: r.error, tx: r.txHash });

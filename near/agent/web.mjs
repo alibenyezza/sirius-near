@@ -16,7 +16,7 @@ import { join } from 'node:path';
 import { checkHolder, issueChallenge } from './lib/gate.mjs';
 import { allOrders, getDataset, listDatasets, MARKET, view, yoctoToNear } from './lib/near.mjs';
 import { attestModel, DEFAULT_MODEL, sha256 } from './lib/nearai.mjs';
-import { AUDITS_DIR, decide, decideAccount, gatherAccountSignals, gatherSignals, loadPolicy, transcriptHash } from './lib/guard.mjs';
+import { AUDITS_DIR, decide, decideAccount, gatherAccountSignals, gatherSignals, loadPolicy, transcriptInfo } from './lib/guard.mjs';
 
 const PORT = Number(process.env.PORT || 4320);
 const LOGO = readFileSync(new URL('./assets/sirius-mark.png', import.meta.url));
@@ -141,9 +141,10 @@ ${reasonsTable(check.reasons)}${check.verdict === 'allow' ? '<div class="note">v
 <div style="margin-top:10px">${people}</div><div class="note">Reports are bonded transactions in the market contract (<span class="mono">get_reports</span>); a report blocks only when the policy trusts its reporter. Age and activity are read from the accounts' key nonces.</div></div>` : '';
   const mine = orders.filter((o) => o.token_id === id);
   // the contract stores the holder's hash; the public transcript is what proves it
-  const th = d.privacyAudit ? transcriptHash(id) : null;
+  const ti = d.privacyAudit ? transcriptInfo(id) : null;
+  const th = ti?.hash ?? null;
   const proof = !d.privacyAudit ? '' : th === d.privacyAudit.report_hash
-    ? `<div class="note"><span class="pass">public transcript matches</span> · <a href="/audits/${esc(id)}.json">transcript</a> · re-check every TEE proof: <span class="mono">node verify-audit.mjs ${esc(id)}</span></div>`
+    ? `<div class="note"><span class="pass">public transcript matches</span> · <a href="/audits/${esc(id)}.json">transcript</a> · re-check every TEE proof: <span class="mono">node verify-audit.mjs ${esc(id)}</span></div><div class="note">verdict <span class="mono">${esc(ti.verdict)}</span>${ti.pii.length ? ` · identifiers left out of training: ${ti.pii.map(esc).join(', ')}` : ''}</div>`
     : th ? '<div class="note"><span class="fail">the published transcript does not match this hash</span></div>'
       : `<div class="note"><span class="warn">no public transcript: the hash is the holder's claim</span></div>`;
   const audit = d.privacyAudit

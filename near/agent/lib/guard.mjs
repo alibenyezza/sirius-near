@@ -14,12 +14,22 @@ export const POLICY_FILE = process.env.SIRIUS_POLICY || here('policy.json');
 
 // public audit transcripts (privacy-audit.mjs --transcript), one per NFT: <dir>/<token id>.json
 export const AUDITS_DIR = process.env.SIRIUS_AUDITS || here('../audits');
-/** The hash a published transcript recomputes to, or null when this NFT has no transcript (or it does not parse). */
-export function transcriptHash(tokenId, dir = AUDITS_DIR) {
+/**
+ * What a published transcript says: the hash it recomputes to, the model's verdict and the columns either detector
+ * flagged. Null when this NFT has no transcript.
+ */
+export function transcriptInfo(tokenId, dir = AUDITS_DIR) {
   const file = `${dir}/${tokenId}.json`;
   if (!existsSync(file)) return null;
-  try { return hashFromTranscript(JSON.parse(readFileSync(file, 'utf8'))); } catch { return 'unreadable'; }
+  try {
+    const t = JSON.parse(readFileSync(file, 'utf8'));
+    const pii = [...new Set([...(t.verdict?.model?.pii_columns ?? []).map((c) => c.column), ...(t.filter?.flags ?? []).map((f) => f.column)])];
+    return { hash: hashFromTranscript(t), verdict: t.verdict?.model?.verdict ?? null, pii };
+  } catch {
+    return { hash: 'unreadable', verdict: null, pii: [] };
+  }
 }
+export const transcriptHash = (tokenId, dir) => transcriptInfo(tokenId, dir)?.hash ?? null;
 
 const readJson = (file, fallback) => (existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : fallback);
 export const loadPolicy = () => readJson(POLICY_FILE, null) ?? (() => { throw new Error(`No policy at ${POLICY_FILE}`); })();
@@ -114,8 +124,9 @@ export function priorOrders(orders, agent, tokenIds, now = Date.now()) {
   return out;
 }
 
+// false when the read fails: the prior-interactions signal then says it could not be read, it does not assume "none"
 const ownedTokens = (accountId, market) => view('nft_tokens_for_owner', { account_id: accountId, from_index: '0', limit: 100 }, market)
-  .then((ts) => ts.map((t) => t.token_id)).catch(() => []);
+  .then((ts) => ts.map((t) => t.token_id)).catch(() => false);
 
 /** Everything the verdict needs, read from testnet for one dataset NFT. `agent` is who is about to pay. */
 export async function gatherSignals(tokenId, { market = MARKET, agent = process.env.SIRIUS_AGENT_ACCOUNT } = {}) {
@@ -142,9 +153,11 @@ export async function gatherSignals(tokenId, { market = MARKET, agent = process.
   // prior interactions: this agent's orders on this NFT and on the other NFTs of the same holder
   let prior = null;
   if (agent) {
-    const holderTokens = [...new Set([String(tokenId), ...(await ownedTokens(token.owner_id, market))])];
-    const orders = await ordersCached();
-    prior = { holder: priorOrders(orders, agent, holderTokens), thisNft: priorOrders(orders, agent, [tokenId]) };
+    const owned = await ownedTokens(token.owner_id, market);
+    const orders = await ordersCached().catch(() => null);
+    prior = owned === false || !orders
+      ? { unreadable: true, agent }
+      : { holder: priorOrders(orders, agent, [...new Set([String(tokenId), ...owned])]), thisNft: priorOrders(orders, agent, [tokenId]) };
   }
   const lastTransfer = history.filter((h) => h.event.Transferred).at(-1);
   const lastPriceChange = history.filter((h) => h.event.PriceChanged).at(-1);
@@ -163,7 +176,7 @@ export async function gatherSignals(tokenId, { market = MARKET, agent = process.
     profile: dataset.profile,
     priceYocto: dataset.price,
     privacyAudit: dataset.privacy_audit ?? null,
-    auditTranscriptHash: transcriptHash(tokenId),
+    ...(() => { const i = transcriptInfo(tokenId); return { auditTranscriptHash: i?.hash ?? null, auditVerdict: i?.verdict ?? null, auditPii: i?.pii ?? [] }; })(),
     vault: dataset.vault,
     expectedVault: `ds-${tokenId}.${market}`,
     vaultExists: Boolean(vaultAccount),
@@ -210,7 +223,8 @@ export function decide(signals, policy, offerYocto = null, now = Date.now()) {
   if (signals.marketCode !== undefined) judgeCode(add, policy, `market ${signals.market}`, signals.market, signals.marketCode, signals.marketFullAccessKeys);
 
   // prior interactions between this agent and the receiver
-  if (signals.prior) {
+  if (signals.prior?.unreadable) add('warn', 'prior interactions', `${signals.prior.agent}'s earlier orders with the holder could not be read`);
+  else if (signals.prior) {
     const { holder: h, thisNft: t } = signals.prior;
     if (t.pending.length) add('warn', 'pending order', `order(s) ${t.pending.join(', ')} by ${t.agent} on this NFT still wait for the runner: paying again buys a second run`);
     judgePrior(add, policy, h, `${signals.holder}'s datasets`);
@@ -230,7 +244,11 @@ export function decide(signals, policy, offerYocto = null, now = Date.now()) {
   else if (signals.auditTranscriptHash === undefined) { /* not gathered (offline tests of other rules) */ }
   else if (!signals.auditTranscriptHash) add(auditLevel, 'privacy audit', 'an audit hash is recorded by the holder, but no public transcript proves it: a claim');
   else if (signals.auditTranscriptHash !== signals.privacyAudit.report_hash) add('block', 'privacy audit', `the published transcript recomputes to ${signals.auditTranscriptHash}, not the hash recorded in the NFT`);
-  else add('info', 'privacy audit', `the public transcript recomputes the hash in the NFT; node verify-audit.mjs ${signals.tokenId} re-checks every TEE proof`);
+  else {
+    add('info', 'privacy audit', `the public transcript recomputes the hash in the NFT; node verify-audit.mjs ${signals.tokenId} re-checks every TEE proof`);
+    if (signals.auditVerdict === 'not_publishable') add('block', 'privacy audit verdict', 'the audit model found this dataset not publishable');
+    else if (signals.auditPii?.length) add('info', 'personal data', `the audit found personal data in ${signals.auditPii.join(', ')}: the runner leaves those columns out of training, and only the model leaves the enclave`);
+  }
   const hits = injectionHits(signals.text);
   if (hits.length) add('warn', 'prompt injection', `the holder's text gives orders to agents: ${hits.map((h) => JSON.stringify(h)).join(', ')}`);
   const freshMin = policy.recentTransferMinutes ?? 0;
@@ -299,9 +317,10 @@ export async function gatherAccountSignals(accountId, { market = MARKET, agent =
   const expectedCode = vaultToken ? (await view('get_config', {}, market)).vault_code_hash : null;
   let prior = null;
   if (agent && s.exists) {
-    const orders = await ordersCached();
+    const orders = await ordersCached().catch(() => null);
     // the market: every order of this agent; a vault: the orders on its NFT; anyone else: the NFTs it holds
-    prior = priorOrders(orders, agent, accountId === market ? null : vaultToken ? [vaultToken] : await ownedTokens(accountId, market));
+    const ids = accountId === market ? null : vaultToken ? [vaultToken] : await ownedTokens(accountId, market);
+    prior = ids === false || !orders ? { unreadable: true, agent } : priorOrders(orders, agent, ids);
   }
   return { accountId, market, agent: agent ?? null, ...s, vaultToken, expectedCode, prior };
 }
@@ -326,7 +345,8 @@ export function decideAccount(signals, policy) {
     if (!policy.pinnedCode?.[id]) add('info', 'contract code', `${id} runs ${signals.code}; the policy pins no build for it, so a code change would go unnoticed`);
   } else add('info', 'account type', `${id} is a plain account (no contract code)`);
   const what = id === signals.market ? `the market ${id}` : signals.vaultToken ? `NFT ${signals.vaultToken}` : `the datasets ${id} holds`;
-  if (signals.prior) judgePrior(add, policy, signals.prior, what);
+  if (signals.prior?.unreadable) add('warn', 'prior interactions', `${signals.prior.agent}'s earlier orders with ${id} could not be read`);
+  else if (signals.prior) judgePrior(add, policy, signals.prior, what);
   const verdict = reasons.some((r) => r.level === 'block') ? 'block' : reasons.some((r) => r.level === 'warn') ? 'warn' : 'allow';
   return { verdict, reasons };
 }

@@ -171,4 +171,11 @@ test('a recorded audit counts only if its public transcript recomputes the hash 
   assert.deepEqual(checks(decide({ ...ok, auditTranscriptHash: 'ab' }, policy, null, now)), ['info:privacy audit']);
   assert.deepEqual(checks(decide({ ...ok, auditTranscriptHash: null }, policy, null, now)), ['warn:privacy audit']);
   assert.deepEqual(checks(decide({ ...ok, auditTranscriptHash: 'cd' }, policy, null, now)), ['block:privacy audit']);
+  // the verdict counts: not publishable blocks; personal columns are noted (the runner leaves them out)
+  assert.deepEqual(checks(decide({ ...ok, auditTranscriptHash: 'ab', auditVerdict: 'not_publishable' }, policy, null, now)), ['info:privacy audit', 'block:privacy audit verdict']);
+  assert.deepEqual(checks(decide({ ...ok, auditTranscriptHash: 'ab', auditVerdict: 'publishable_after_removing_pii', auditPii: ['email'] }, policy, null, now)), ['info:privacy audit', 'info:personal data']);
+});
+
+test('prior interactions that cannot be read are a warning, not "none"', () => {
+  assert.deepEqual(checks(decide({ ...ok, prior: { unreadable: true, agent: 'agent.testnet' } }, policy, null, now)), ['warn:prior interactions']);
 });

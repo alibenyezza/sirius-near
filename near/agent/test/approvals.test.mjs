@@ -25,3 +25,12 @@ test('a sale or a price change after the approval voids it', () => {
   assert.equal(takeApproval('4', (NEAR / 2n).toString(), { ...seen, priceYocto: (NEAR / 10n).toString() }, file), null, 'new price');
   assert.ok(takeApproval('4', (NEAR / 2n).toString(), seen, file), 'still valid for what the human saw');
 });
+
+test('an approval lapses after a day, and an entry without holder or price approves nothing', async () => {
+  const file = fresh();
+  addApproval('4', '0.6', 'carol', seen, file);
+  assert.equal(takeApproval('4', (NEAR / 2n).toString(), seen, file, Date.now() + 25 * 3_600_000), null, 'expired');
+  const { writeFileSync } = await import('node:fs');
+  writeFileSync(file, JSON.stringify([{ tokenId: '4', maxOfferYocto: NEAR.toString(), by: 'agent', at: new Date().toISOString() }]));
+  assert.equal(takeApproval('4', (NEAR / 2n).toString(), seen, file), null, 'a bare entry written by someone else');
+});

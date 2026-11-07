@@ -9,10 +9,11 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const PRIVATE_PATH = ['privacy-audit.mjs', 'lib/audit.mjs', 'lib/nearai.mjs', 'web.mjs'];
-const WRITES = /\b(writeFile|appendFile|createWriteStream|mkdir|rename|copyFile|localStorage|indexedDB|sqlite|redis|leveldb)\w*/;
+const WRITES = /\b(writeFile|writeSync|appendFile|createWriteStream|mkdir|rename|copyFile|symlink|truncate|localStorage|indexedDB|sqlite|redis|leveldb)\w*/;
 // comments may say "nothing is written": only code counts
 const code = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map((l) => l.replace(/^\s*\/\/.*$/, '')).join('\n');
-const localImports = (src) => [...src.matchAll(/from\s+'(\.{1,2}\/[^']+)'/g)].map((m) => m[1]);
+// static, side-effect and dynamic imports of local files, with either quote
+const localImports = (src) => [...src.matchAll(/(?:from\s+|import\s*\(?\s*)['"](\.{1,2}\/[^'"]+)['"]/g)].map((m) => m[1]);
 
 /** The files and every local module they import, followed to the end. */
 function closure(files) {

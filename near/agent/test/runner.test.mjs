@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { auditBinding, buildDelivery, canonical, findDataset } from '../runner-bridge.mjs';
+import { checkSampleProof } from '../lib/audit.mjs';
+import { loadRunnerKey } from '../lib/seal.mjs';
 import { trainLinearRegression } from '../lib/train.mjs';
 import { sha256 } from '../lib/nearai.mjs';
 
@@ -46,8 +48,23 @@ test('refuses profiles the local runner cannot train', () => {
 test('the runner trains only the file the privacy audit saw, as the public transcript proves', () => {
   const t = JSON.parse(readFileSync(new URL('../../audits/6.json', import.meta.url), 'utf8'));
   const nft6 = { cid_hash: t.datasetHash, privacy_audit: { report_hash: t.hash } };
-  assert.deepEqual(auditBinding(nft6, csv, t), { audited: true, transcript: true, auditHash: t.hash, plaintextIsTheAuditedFile: true });
+  const b = auditBinding(nft6, csv, t);
+  assert.equal(b.auditHash, t.hash);
+  assert.equal(b.plaintextIsTheAuditedFile, true);
+  // the columns the detectors flagged are left out of training
+  assert.deepEqual([...b.excluded].sort(), ['email', 'patient_name', 'phone', 'postcode']);
   assert.throws(() => auditBinding(nft6, Buffer.from(['patient_name,age', 'someone else,40', ''].join('\n')), t), /not the CSV the privacy audit saw/);
   assert.throws(() => auditBinding({ ...nft6, privacy_audit: { report_hash: 'ab' } }, csv, t), /does not match the hash recorded/);
-  assert.deepEqual(auditBinding({ cid_hash: 'x' }, csv, null), { audited: false });
+  assert.throws(() => auditBinding(nft6, csv, null), /no public transcript proves it/);
+  assert.throws(() => auditBinding(nft6, csv, { ...t, verdict: { ...t.verdict, model: { ...t.verdict.model, verdict: 'not_publishable' } } }), /not publishable/);
+  assert.equal(auditBinding({ cid_hash: 'x' }, csv, null).audited, false);
+});
+
+test('with its seal key the runner proves the TEE audited the sample of this very file', (t) => {
+  let key;
+  try { key = loadRunnerKey(); } catch { return t.skip('no runner seal key on this machine (only the runner has it)'); }
+  const tr = JSON.parse(readFileSync(new URL('../../audits/6.json', import.meta.url), 'utf8'));
+  const nft6 = { cid_hash: tr.datasetHash, privacy_audit: { report_hash: tr.hash } };
+  assert.equal(auditBinding(nft6, csv, tr, key.secret).sampleIsFromThisFile, true);
+  assert.deepEqual(checkSampleProof(tr, csv.toString('utf8').replace('Jade', 'Jane'), key.secret), { model: false, filter: false });
 });

@@ -16,7 +16,7 @@ import { MARKET, EXPLORER, provider, view } from './lib/near.mjs';
 import { sha256 } from './lib/nearai.mjs';
 import { trainLinearRegression } from './lib/train.mjs';
 import { isSealed, open, loadRunnerKey } from './lib/seal.mjs';
-import { hashFromTranscript } from './lib/audit.mjs';
+import { checkSampleProof, hashFromTranscript } from './lib/audit.mjs';
 import { AUDITS_DIR } from './lib/guard.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -45,23 +45,36 @@ export function findDataset(cidHash, dir = EXAMPLES, runnerKey = null) {
   return null;
 }
 
+export const DEFAULT_EXCLUDE = ['patient_name', 'email', 'phone', 'postcode'];
+
 /**
- * Ties the file the runner opened to the privacy audit in the NFT: the public transcript must recompute the audit hash
- * recorded on-chain, and the plaintext must be the CSV the TEEs audited (`plaintextHash`, or the dataset hash for a
- * plain CSV). Returns what goes into the certificate; throws when the file is not the audited one.
+ * Ties the file the runner opened to the privacy audit in the NFT, and returns what goes into the certificate:
+ *  - the public transcript must recompute the audit hash recorded on-chain (an audit without one is refused);
+ *  - the plaintext must be the CSV the TEEs audited (`plaintextHash`, or the dataset hash for a plain CSV);
+ *  - with the runner key, the sample the model TEE and the filter received must be the sample of this very file
+ *    (the sealed per-message secrets re-encrypt it byte for byte);
+ *  - the columns either detector flagged are left out of training.
+ * Throws when the file is not the audited one. Without any audit, the default personal columns are left out.
  */
-export function auditBinding(dataset, csv, transcript) {
-  if (!dataset.privacy_audit) return { audited: false };
-  if (!transcript) return { audited: true, transcript: false, auditHash: dataset.privacy_audit.report_hash };
+export function auditBinding(dataset, csv, transcript, runnerSecret = null) {
+  if (!dataset.privacy_audit) return { audited: false, excluded: DEFAULT_EXCLUDE };
+  if (!transcript) throw new Error('an audit hash is recorded but no public transcript proves it: not training');
   const hash = hashFromTranscript(transcript);
   if (hash !== dataset.privacy_audit.report_hash) throw new Error('the audit transcript does not match the hash recorded in the NFT');
   if (sha256(csv) !== (transcript.plaintextHash ?? transcript.datasetHash)) throw new Error('this file is not the CSV the privacy audit saw: not training');
-  return { audited: true, transcript: true, auditHash: hash, plaintextIsTheAuditedFile: true };
+  if (transcript.verdict?.model?.verdict === 'not_publishable') throw new Error('the privacy audit says this dataset is not publishable: not training');
+  let sample = null;
+  if (transcript.sampleProof && runnerSecret) {
+    sample = checkSampleProof(transcript, csv.toString('utf8'), runnerSecret);
+    if (!sample.model || sample.filter === false) throw new Error('the sample the TEEs audited is not the sample of this file: not training');
+  }
+  const excluded = [...new Set([...(transcript.verdict?.model?.pii_columns ?? []).map((c) => c.column), ...(transcript.filter?.flags ?? []).map((f) => f.column)])];
+  return { audited: true, transcript: true, auditHash: hash, plaintextIsTheAuditedFile: true, sampleIsFromThisFile: sample ? true : null, excluded };
 }
 
-export function buildDelivery({ orderId, order, dataset, csv, runnerId, sealed = false, sealKey = null, audit = { audited: false }, now = new Date() }) {
+export function buildDelivery({ orderId, order, dataset, csv, runnerId, sealed = false, sealKey = null, audit = { audited: false, excluded: DEFAULT_EXCLUDE }, now = new Date() }) {
   if (order.profile !== 'linear_regression') throw new Error(`Profile ${order.profile} not supported by the local runner`);
-  const model = trainLinearRegression(csv.toString('utf8'), { exclude: ['patient_name', 'email', 'phone', 'postcode'] });
+  const model = trainLinearRegression(csv.toString('utf8'), { exclude: audit.excluded ?? DEFAULT_EXCLUDE });
   const modelHash = sha256(canonical(model));
   const certificate = {
     version: 'sirius-near-certificate-1',
@@ -109,7 +122,9 @@ async function deliver(runner, orderId, order) {
   const tfile = join(AUDITS_DIR, `${order.token_id}.json`);
   let audit;
   try {
-    audit = auditBinding(dataset, local.csv, existsSync(tfile) ? JSON.parse(readFileSync(tfile, 'utf8')) : null);
+    let runnerSecret = null;
+    try { runnerSecret = loadRunnerKey().secret; } catch { /* no seal key on this machine: the sample proof is skipped */ }
+    audit = auditBinding(dataset, local.csv, existsSync(tfile) ? JSON.parse(readFileSync(tfile, 'utf8')) : null, runnerSecret);
   } catch (e) {
     return console.log(`order ${orderId}: ${e.message}; the buyer gets a refund after the deadline`);
   }

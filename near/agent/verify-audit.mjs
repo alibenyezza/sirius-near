@@ -12,7 +12,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ed25519 } from '@noble/curves/ed25519';
 import { recoverMessageAddress } from 'viem';
-import { hashFromTranscript, parseAudit } from './lib/audit.mjs';
+import { checkSampleProof, hashFromTranscript, parseAudit, sampleCells } from './lib/audit.mjs';
+import { loadRunnerKey } from './lib/seal.mjs';
 import { e2eeDecrypt, sha256, verifyReport } from './lib/nearai.mjs';
 import { MARKET, view } from './lib/near.mjs';
 
@@ -71,6 +72,27 @@ try {
   add('model exchange', 'the published verdict is the one the model signed', JSON.stringify(verdict.pii_columns) === JSON.stringify(t.verdict.model.pii_columns));
 } catch (e) {
   add('model exchange', "the reply opens with the one-time key: the model's own verdict", false, e.message);
+}
+
+// 3b. with the CSV: nothing the one-time key opens quotes the sample; with the runner key too: the sample proof
+if (csv) {
+  const text = readFileSync(csv, 'utf8');
+  const message = JSON.parse(c.responseBody).choices?.[0]?.message ?? {};
+  const opened = Object.values(message).filter((v) => typeof v === 'string' && /^[0-9a-f]+$/i.test(v) && v.length > 112)
+    .map((v) => { try { return e2eeDecrypt(v, Buffer.from(c.oneTimeSecretHex, 'hex')); } catch { return ''; } }).join(' | ');
+  const leaked = sampleCells(text).filter((x) => opened.includes(x));
+  add('data', 'the published reply (every field the one-time key opens) quotes no value of the sample', leaked.length === 0, `${Object.keys(message).join(', ')}`);
+  let runner = null;
+  try { runner = loadRunnerKey(); } catch { /* only the runner holds it */ }
+  if (t.sampleProof && runner) {
+    const proof = checkSampleProof(t, text, runner.secret);
+    add('data', 'runner key: the model TEE received the sample of this CSV, byte for byte', proof.model === true);
+    if (proof.filter !== null) add('data', 'the privacy filter received the sample of this CSV (request hash)', proof.filter === true);
+  } else if (t.filter) {
+    // the filter request needs no secret: rebuild it from the CSV and compare its hash
+    const proof = checkSampleProof({ ...t, sampleProof: null }, text, null);
+    add('data', 'the privacy filter received the sample of this CSV (request hash)', proof.filter === true);
+  }
 }
 
 // 4. the privacy filter: hashes and the gateway's ECDSA signature (its input was the sample, so it is not published)
