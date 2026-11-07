@@ -75,7 +75,7 @@ say(`   ${await raw(MARKET, actions.functionCall('close_agent_budget', { agent_i
 
 say(`\n8. The agent drafts a report with this run's evidence; its key cannot file it, a human signs it (as in scripts/report-demo.sh)`);
 const rep = await tool('report_account', { account: attacker, reason: 'dataset description gives payment orders to agents (prompt injection)', evidence: `NFT ${tokenId} on ${MARKET}; refused order tx ${direct.txHash}` });
-say(`   ${rep.error ?? `draft: ${rep.method} on ${rep.contract}, bond ${rep.bondNear} NEAR, to be signed by ${rep.signBy}`}`);
+say(`   ${rep.error ?? `draft: report(${rep.args.account_id}) on the market ${rep.contract}, evidence "${rep.args.evidence}", bond ${rep.bondNear} NEAR, to be signed by ${rep.signBy}`}`);
 
 say('\n9. The injected agent tries again with a normal offer (0.5 NEAR): the price and the on-chain report still block it');
 showVerdict(await tool('buy_training_run', { tokenId, maxPriceNear: '0.5' }));

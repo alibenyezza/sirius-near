@@ -29,6 +29,11 @@ sleeps when idle, so the first load can take about 50 seconds).
 | `node check.mjs sirius-ali-market.testnet` (any account works), or <https://sirius-near.onrender.com/check> | `ALLOW`: a contract on the build pinned in `policy.json`, with no full-access key, so its code cannot change; and this agent's earlier orders there |
 | `npm test` | 59 tests pass, in under 3 minutes (some read testnet live; the test files run one after another so the public RPC does not throttle them) |
 
+No near-cli? `node check.mjs <account>` also prints an account's keys and code hash (`node check.mjs
+sirius-ali-market.testnet`: `0 key(s)`), and any view works over plain RPC, for example
+`curl -s https://rpc.testnet.fastnear.com -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"query","params":{"request_type":"view_access_key_list","finality":"final","account_id":"sirius-ali-market.testnet"}}'`
+returns `"keys":[]`.
+
 ![NFT page: vault, earnings, holders, history](near/docs/nft-page.png)
 
 ## The problem
@@ -203,7 +208,7 @@ way after the other (scripted, no LLM, so the run is the same every time). Full 
 | The injected agent tries to | Stopped by | What it gets back |
 |---|---|---|
 | pay through its tool with the offer from the description (5 NEAR) | the check | `BLOCK`: Mallory is reported on-chain by a trusted reporter; price and offer above the 0.6 NEAR policy limit; warnings for the 2-day-old account, the missing audit and `"send 2 NEAR to"`, `"maxPriceNear"` in the text |
-| skip the check and call the market directly with its key | the contract | `Price above the budget's per-order limit` (tx `S92q9f8ZagxGiqVA1Q7yTbK46oitf7dAFyB3rX3mkkK`) |
+| skip the check and call the market directly with its key | the contract | `Price above the budget's per-order limit` (tx `ETFu6GzgfbZsLc4RKuxAAcG49SksW83YVsHUZYt2jyoh`) |
 | send 0.1 NEAR to Mallory | the protocol | `AccessKeyRequiresFullAccessActionError` |
 | call a contract of Mallory | the protocol | `AccessKeyReceiverMismatchActionError` |
 | attach a deposit to `order` on the market | the protocol | `AccessKeyDepositWithFunctionCallActionError` |
@@ -211,7 +216,7 @@ way after the other (scripted, no LLM, so the run is the same every time). Full 
 | try again at a normal price (0.5 NEAR) | the check | `BLOCK`: Mallory is reported on-chain by Carol, with the evidence; the price is above the policy |
 | any agent asks about Mallory's account before sending funds (`check_account`) | the check | `BLOCK`: the same on-chain report; the account is 2 days old |
 
-The budget is untouched (0.5 NEAR before and after) and nothing reached Mallory. This run is from 6 Nov; the agent
+The budget is untouched (0.5 NEAR before and after) and nothing reached Mallory. This run is from 7 Nov; the agent
 also drafts a report with the new evidence, which only a human can sign. The first run (4 Nov, before on-chain
 reports existed) had the same refusals (order tx `CgtKqWiaJVi2VCg7MFBHUwhoGCPd1RRyKw2emvVzYuW2`, now the evidence in Carol's report).
 
