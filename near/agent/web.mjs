@@ -269,7 +269,13 @@ export function createApp() {
       }
       return send(404, page('Not found', '<h1>Not found</h1>'));
     } catch (e) {
-      return send(502, page('Error', `<h1>Testnet did not answer</h1><p class="k">${esc(e.message)}</p>`));
+      // Name the service that failed: /verified asks NEAR AI Cloud for a fresh attestation, the other pages read testnet.
+      const nearai = /attestation|near\.ai/i.test(String(e.message));
+      const head = nearai ? 'NEAR AI Cloud did not answer' : 'Testnet did not answer';
+      const hint = nearai
+        ? '<p>This page asks NEAR AI Cloud for a fresh attestation on every load; try again in a minute. The audits recorded in the NFTs stay checkable without it: <code>node verify-audit.mjs 6</code>.</p>'
+        : '<p>The public testnet RPC did not answer; try again in a minute.</p>';
+      return send(502, page('Error', `<h1>${head}</h1>${hint}<p class="k">${esc(e.message)}</p>`));
     }
   });
 }
