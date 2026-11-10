@@ -9,7 +9,7 @@ data by a **private model of NEAR AI Cloud whose TEE we verify ourselves**, and 
 budget a human gave them**, with a key that cannot do anything else.
 
 Built at NEAR HACKATHON (Nov 2026). Tracks: **Privacy & Private AI** (`privacy`), **NFTs That Do Something**
-(`nfts`), **AI Security & Defense** (`security`).
+(`nfts`), **AI Security & Defense** (`security`), **Agent Economy** (`agents`).
 
 **Live demo: <https://sirius-near.onrender.com>** (read-only pages, every value read from testnet; the free instance
 sleeps when idle, so the first load can take about 50 seconds).
@@ -98,6 +98,20 @@ on-chain reports, account age, contract code, the agent's earlier orders, and th
 | An agent-side wrapper that refuses to sign on block and asks a human on warn | `buy_training_run` (MCP) runs the check first; a warning needs `node approve.mjs <id> <max offer>` by a human, used once | test `buy_training_run never signs on a block or an unapproved warning` |
 | A function-call key scoped to one contract, never a full-access key, with its limits explained | `agent.sirius-ali-carol.testnet`: one key, `order_with_budget` on the market only; plus a gas-key agent (NEP-611) that cannot lock itself out | [What the agent's key can and cannot do](#what-the-agents-key-can-and-cannot-do) |
 | An attack demo: a prompt-injected agent tries to pay a known-bad address and is stopped, with the log | `near/agent/attack-demo.mjs` on testnet: 8 attempts, stopped by the check, the contract and the key | [`near/scripts/attack-demo.log`](near/scripts/attack-demo.log) |
+
+### `agents`: Agent Economy
+
+An agent that **pays for data and compute** (a training run on a dataset NFT) from a budget a human gave it, and gets
+a receipt for each purchase.
+
+| The track asks for | In Sirius | Check it |
+|---|---|---|
+| Explain how the agent holds its keys and what it cannot do without the human | One function-call key, `order_with_budget` on the market only, no deposit; the money sits in the market under `fund_agent(agent, max_per_order)`, which only the human (the funder) can fill or close (`close_agent_budget`) | [What the agent's key can and cannot do](#what-the-agents-key-can-and-cannot-do); `near account list-keys agent.sirius-ali-carol.testnet network-config testnet now` |
+| Everything it spends stays inside the budget | The contract takes at most `max_per_order` and never more than the budget's balance or the dataset's price; the agent's own `maxPriceNear` is a second cap | tests `agent_cannot_exceed_per_order_limit`, `agent_cannot_overspend`, `agent_walks_away_above_its_offer`, `agent_cannot_close_its_own_budget`; `near/scripts/sealed-demo.log` step 5: offer 0.25 refused (`Price above the agent's offer`), offer 0.6 pays the 0.5 price |
+| Pays for data or compute, directly on NEAR | `buy_training_run` (MCP): NEAR from the budget, held by the market until the runner delivers the model, then 90% to the dataset's vault | `sealed-demo.log` step 5 and 6: order 11, payment `DExsMMkmqJMbR66sUgep9XZnzwWsFddE3RKZm4zTd7As`, delivery `5Bt2Se6kCkrnvMiCrQTkNGSzgRQSViLEHuBS1uEjdGBv` |
+| A receipt for every purchase: what, from whom, at what price, whether the work passed | The receipt names the order, the dataset and its holder at that moment, the vault, the price, the status, the payment transaction and the delivery (model hash) once delivered; work not delivered by the deadline is refunded to the budget (`refund_order`) | `sealed-demo.log` step 5 (receipt JSON); `near/scripts/refund-demo.log` |
+| Checks before paying | The counterparty check of the `security` track: block is final, warn needs a human | see `security` above |
+| Not done | No NEAR AI Agent Market jobs, no counter-offer (the agent raises its cap or walks away, it does not negotiate), no NEAR Intents: payments are plain NEAR on testnet | |
 
 ## Live on testnet
 
