@@ -11,7 +11,7 @@ budget a human gave them**, with a key that cannot do anything else.
 Built at NEAR HACKATHON (Nov 2026). Tracks: **Privacy & Private AI** (`privacy`), **NFTs That Do Something**
 (`nfts`), **AI Security & Defense** (`security`), **Agent Economy** (`agents`).
 
-**Live demo: <https://sirius-near.onrender.com>** (read-only pages, every value read from testnet; the free instance
+**Demo video (2 min 20): <https://youtu.be/5PEuUAuWO_U>** · **Live demo: <https://sirius-near.onrender.com>** (read-only pages, every value read from testnet; the free instance
 sleeps when idle, so the first load can take about 50 seconds).
 
 ## Check it in 60 seconds (no wallet, no key)
@@ -397,7 +397,7 @@ Known limits are listed at the end of [`near/THREAT-MODEL.md`](near/THREAT-MODEL
 Sirius existed before the hackathon on another chain. The first commit of this repository is a copy of it, tagged
 [`pre-hackathon`](../../tree/pre-hackathon); that code has since been removed from the tree. **Everything in this
 repository (`near/`) was built during the hackathon:** the `pre-hackathon` tree has no `near/` folder, so
-[`pre-hackathon...main`](../../compare/pre-hackathon...main) shows every NEAR file as new (and the old app as
+[`pre-hackathon...hackathon-submission`](../../compare/pre-hackathon...hackathon-submission) shows every NEAR file as new (and the old app as
 deleted, in commit `e5de130`).
 
 Non-NEAR services used: NEAR AI Cloud's attestation relies on Intel (PCCS collateral) and NVIDIA NRAS.
